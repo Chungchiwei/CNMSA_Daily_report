@@ -10,7 +10,7 @@ import requests
 import traceback
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
@@ -532,8 +532,10 @@ class MSANavigationWarningsScraper:
         font_style = "font-family: 'Microsoft JhengHei', '微軟正黑體', 'Segoe UI', sans-serif;"
         count = len(self.captured_warnings_data)
         status_color = "#2E7D32" if count == 0 else "#D9534F"
+        
         utc_now = datetime.now(timezone.utc)
         now_str_UTC = utc_now.strftime('%Y-%m-%d %H:%M')
+
         lt_now = utc_now + timedelta(hours=8)
         now_str_LT = lt_now.strftime('%Y-%m-%d %H:%M')
         
@@ -578,6 +580,16 @@ class MSANavigationWarningsScraper:
             html += "</table>"
         else:
             html += "<p style='text-align:center; color:#666; padding:20px;'>本次執行未發現新的航行警告</p>"
+                # Footer
+        html += f"""
+            <div style="margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 20px; font-size: 15px; color: #9ca3af; text-align: center; {font_style}">
+                <p style="margin: 0;">Wan Hai Lines Ltd. | Marine Technology Division</p>
+                <p style="margin: 0;color: blue;">Present by Fleet Risk Department</p>
+                <p style="margin: 0 0 0 0;">Data Source: China Maritime Safety Administration. (CN_MSA) | Automated System</p>
+            </div>
+        </body>
+        </html>
+        """
             
         html += "</body></html>"
         
