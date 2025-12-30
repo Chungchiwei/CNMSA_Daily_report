@@ -421,17 +421,26 @@ class MSANavigationWarningsScraper:
             self.driver.quit()
 
 if __name__ == "__main__":
-    # ========== 環境變數設定 ==========
-    TEAMS_WEBHOOK = os.getenv('TEAMS_WEBHOOK_URL', 'https://default2b20eccf1c1e43ce93400edfe3a226.6f.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/f59bfeccf30041d5b8a51cbd4ee617fe/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zJiQpFVAzZyaag3zbAmzpfy1yXWW3gZ2AcAMQUpOEBQ')
-    MAIL_USER = os.getenv('MAIL_USER', 'harry810403@gmail.com')
-    MAIL_PASS = os.getenv('MAIL_PASSWORD', 'nsvhlultlthluogg')
-    TARGET_EMAIL = "harry_chung@wanhai.com"
+    # ========== 環境變數設定 (修改版) ==========
+    # 優先從系統環境變數讀取 (GitHub Actions 會注入)，讀不到才用預設值 (本機測試用)
     
+    # 注意：在 GitHub 上請勿使用預設值填寫真實密碼
+    TEAMS_WEBHOOK = os.getenv('TEAMS_WEBHOOK_URL',"https://default2b20eccf1c1e43ce93400edfe3a226.6f.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/f59bfeccf30041d5b8a51cbd4ee617fe/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zJiQpFVAzZyaag3zbAmzpfy1yXWW3gZ2AcAMQUpOEBQ")
+    
+    MAIL_USER = os.getenv('MAIL_USER') 
+    MAIL_PASS = os.getenv('MAIL_PASSWORD') 
+    
+    # 目標信箱也可以設為變數，或像這樣寫死 (非敏感資訊)
+    TARGET_EMAIL = os.getenv('TARGET_EMAIL', "harry_chung@wanhai.com")
+    
+    if not MAIL_USER or not MAIL_PASS:
+        print("⚠️ 警告: 未偵測到 Email 帳號或密碼，請檢查環境變數設定。")
+
     scraper = MSANavigationWarningsScraper(
         webhook_url=TEAMS_WEBHOOK,
         enable_teams=True,
         send_mode='batch',
-        headless=True,
+        headless=True, # 在 GitHub Actions 上必須是 True (無頭模式)
         mail_user=MAIL_USER,
         mail_pass=MAIL_PASS,
         target_email=TARGET_EMAIL
