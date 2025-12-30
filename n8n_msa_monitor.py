@@ -16,6 +16,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager  # 新增
 from database_manager import DatabaseManager
 from keyword_manager import KeywordManager
 
@@ -283,7 +285,7 @@ class GmailRelayNotifier:
         msg = MIMEMultipart('alternative')
         msg['From'] = self.user
         msg['To'] = self.target
-        msg['Subject'] = f"MSA 航行警告通知 - {datetime.now().strftime('%Y-%m-%d')}"
+        msg['Subject'] = "GITHUB_TRIGGER_CN_MSA_REPORT"
         
         msg.attach(MIMEText(json.dumps(report_data, ensure_ascii=False, indent=2), 'plain', 'utf-8'))
         msg.attach(MIMEText(report_html, 'html', 'utf-8'))
@@ -306,7 +308,7 @@ class GmailRelayNotifier:
 # ==================== 4. 主爬蟲類別 ====================
 class MSANavigationWarningsScraper:
     def __init__(self, webhook_url=None, enable_teams=True, send_mode='batch', headless=True, 
-                 mail_user=None, mail_pass=None, target_email=None):
+             mail_user=None, mail_pass=None, target_email=None):
         print("🚀 初始化海事局爬蟲...")
         
         self.keyword_manager = KeywordManager()
@@ -328,21 +330,87 @@ class MSANavigationWarningsScraper:
         # Email 初始化
         self.email_notifier = GmailRelayNotifier(mail_user, mail_pass, target_email)
         
-        # 瀏覽器設定
+        # ========== 關鍵修正：WebDriver 設定 ==========
+        print("🌐 正在啟動 Chrome WebDriver...")
+        
         options = webdriver.ChromeOptions()
-        if headless: 
-            options.add_argument('--headless')
+        
+        # 基本設定
+        if headless:
+            options.add_argument('--headless=new')  # 使用新版 headless 模式
+        
+        # 穩定性設定
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-logging')
         options.add_argument('--disable-gpu')
+        options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--disable-extensions')
+        
+        # 效能優化
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--disable-logging')
+        options.add_argument('--log-level=3')
+        options.add_argument('--silent')
+        
+        # 網路設定
+        options.add_argument('--dns-prefetch-disable')
+        options.add_argument('--disable-web-security')
+        
+        # User Agent
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        self.driver = webdriver.Chrome(options=options)
-        self.wait = WebDriverWait(self.driver, 10)
+        # 視窗大小（即使 headless 也需要）
+        options.add_argument('--window-size=1920,1080')
+        
+        # 忽略證書錯誤
+        options.add_argument('--ignore-certificate-errors')
+        options.add_argument('--ignore-ssl-errors')
+        
+        # 禁用圖片載入（加速）
+        prefs = {
+            'profile.managed_default_content_settings.images': 2,
+            'profile.default_content_setting_values.notifications': 2,
+        }
+        options.add_experimental_option('prefs', prefs)
+        
+        # 排除自動化標記
+        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        # 設定 Service（關鍵！）
+        from selenium.webdriver.chrome.service import Service
+        service = Service()
+        service.creation_flags = 0x08000000  # Windows: CREATE_NO_WINDOW
+        
+        try:
+            # 初始化 WebDriver（增加重試機制）
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    print(f"  嘗試啟動 WebDriver (第 {attempt + 1}/{max_retries} 次)...")
+                    self.driver = webdriver.Chrome(service=service, options=options)
+                    self.driver.set_page_load_timeout(120)  # 頁面載入超時
+                    self.driver.set_script_timeout(30)      # 腳本執行超時
+                    print("  ✅ WebDriver 啟動成功")
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        print(f"  ⚠️ 啟動失敗，{3}秒後重試...")
+                        time.sleep(3)
+                    else:
+                        raise Exception(f"WebDriver 啟動失敗（已重試 {max_retries} 次）: {e}")
+            
+            self.wait = WebDriverWait(self.driver, 15)  # 增加等待時間
+            
+        except Exception as e:
+            print(f"❌ WebDriver 初始化失敗: {e}")
+            raise
+        
         self.three_days_ago = datetime.now() - timedelta(days=3)
         self.new_warnings = []
         self.captured_warnings_data = []
+        
+        print("✅ 爬蟲初始化完成\n")
 
     def check_keywords(self, text):
         """檢查文字中是否包含關鍵字"""
@@ -515,24 +583,74 @@ class MSANavigationWarningsScraper:
         start = datetime.now()
         try:
             print(f"⏱️ 開始執行... (通知模式: {self.send_mode})")
-            self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
-            time.sleep(3)
             
-            nav_btn = self.wait.until(EC.presence_of_element_located((By.XPATH, "//span[contains(text(), '航行警告')]")))
-            self.driver.execute_script("arguments[0].click();", nav_btn)
-            time.sleep(2)
+            # ========== 關鍵修正：增加重試機制 ==========
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    print(f"🌐 正在載入海事局網站 (第 {attempt + 1}/{max_retries} 次)...")
+                    self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
+                    
+                    # 等待頁面完全載入
+                    time.sleep(5)
+                    
+                    # 驗證頁面是否載入成功
+                    if "海事" in self.driver.title or len(self.driver.page_source) > 1000:
+                        print("✅ 頁面載入成功")
+                        break
+                    else:
+                        raise Exception("頁面內容異常")
+                        
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        print(f"⚠️ 載入失敗: {e}，5秒後重試...")
+                        time.sleep(5)
+                    else:
+                        raise Exception(f"網頁載入失敗（已重試 {max_retries} 次）: {e}")
             
-            bureaus = [
-                b.text.strip() 
-                for b in self.driver.find_elements(By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text") 
-                if b.text.strip()
-            ]
+            # 點擊「航行警告」按鈕
+            try:
+                print("🔍 尋找「航行警告」按鈕...")
+                nav_btn = self.wait.until(
+                    EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), '航行警告')]"))
+                )
+                self.driver.execute_script("arguments[0].click();", nav_btn)
+                time.sleep(3)
+                print("✅ 已點擊「航行警告」")
+            except Exception as e:
+                print(f"❌ 找不到「航行警告」按鈕: {e}")
+                # 嘗試截圖除錯（如果不是 headless）
+                try:
+                    self.driver.save_screenshot('error_screenshot.png')
+                    print("📸 已儲存錯誤截圖: error_screenshot.png")
+                except:
+                    pass
+                raise
             
-            print(f"📍 找到 {len(bureaus)} 個海事局")
+            # 獲取海事局列表
+            try:
+                bureaus = [
+                    b.text.strip() 
+                    for b in self.driver.find_elements(By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text") 
+                    if b.text.strip()
+                ]
+                
+                if not bureaus:
+                    raise Exception("未找到任何海事局")
+                
+                print(f"📍 找到 {len(bureaus)} 個海事局")
+                
+            except Exception as e:
+                print(f"❌ 獲取海事局列表失敗: {e}")
+                raise
             
+            # 遍歷海事局
             for b_name in bureaus:
                 try:
-                    elem = self.driver.find_element(By.XPATH, f"//div[@class='nav_lv2_text' and contains(text(), '{b_name}')]")
+                    elem = self.driver.find_element(
+                        By.XPATH, 
+                        f"//div[@class='nav_lv2_text' and contains(text(), '{b_name}')]"
+                    )
                     self.scrape_bureau_warnings(b_name, elem)
                 except Exception as e:
                     print(f"⚠️ 跳過 {b_name}: {e}")
@@ -566,9 +684,25 @@ class MSANavigationWarningsScraper:
             print(f"❌ 執行錯誤: {e}")
             print(f"{'='*60}")
             traceback.print_exc()
+            
+            # 嘗試儲存錯誤資訊
+            try:
+                with open('error_log.txt', 'a', encoding='utf-8') as f:
+                    f.write(f"\n{'='*60}\n")
+                    f.write(f"時間: {datetime.now()}\n")
+                    f.write(f"錯誤: {e}\n")
+                    f.write(traceback.format_exc())
+                    f.write(f"{'='*60}\n")
+                print("📝 錯誤日誌已儲存到 error_log.txt")
+            except:
+                pass
+                
         finally:
-            self.driver.quit()
-            print("🔚 瀏覽器已關閉")
+            try:
+                self.driver.quit()
+                print("🔚 瀏覽器已關閉")
+            except:
+                print("⚠️ 瀏覽器關閉時發生錯誤")
 
 
 # ==================== 5. 主程式進入點 ====================
