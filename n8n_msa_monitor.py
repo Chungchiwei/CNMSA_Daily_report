@@ -1,3 +1,5 @@
+import platform  # 記得在檔案最上面 import platform
+import subprocess
 import os
 import sys
 import logging
@@ -379,8 +381,10 @@ class MSANavigationWarningsScraper:
         
         # 設定 Service（關鍵！）
         from selenium.webdriver.chrome.service import Service
-        service = Service()
-        service.creation_flags = 0x08000000  # Windows: CREATE_NO_WINDOW
+        service = Service(ChromeDriverManager().install())
+        if platform.system() == 'Windows':
+            service.creation_flags = subprocess.CREATE_NO_WINDOW
+        
         
         try:
             # 初始化 WebDriver（增加重試機制）
