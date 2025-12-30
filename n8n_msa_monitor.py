@@ -532,32 +532,39 @@ class MSANavigationWarningsScraper:
         font_style = "font-family: 'Microsoft JhengHei', '微軟正黑體', 'Segoe UI', sans-serif;"
         count = len(self.captured_warnings_data)
         status_color = "#2E7D32" if count == 0 else "#D9534F"
+        utc_now = datetime.now(timezone.utc)
+        now_str_UTC = utc_now.strftime('%Y-%m-%d %H:%M')
+        lt_now = utc_now + timedelta(hours=8)
+        now_str_LT = lt_now.strftime('%Y-%m-%d %H:%M')
         
         # HTML 內容
-        html = f"""
+        html =  f"""
         <html><body style="{font_style} color:#333; line-height:1.5;">
             <div style="background:#003366; color:white; padding:20px; border-radius:6px 6px 0 0;">
-                <h2 style="margin:0;">🚢 MSA 航行警告監控</h2>
-                <p style="margin:5px 0 0 0; opacity:0.9; font-size:13px;">Update: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+                <h2 style="margin: 0; font-size: 25px; font-weight: 700; letter-spacing: 0.5px;"> 
+                🚢 中國海事局(CN_MSA) 航行警告監控系統
+                </h2>
+                <div style="margin-top: 8px; font-size: 12px; color: #a3cbe8; font-weight: 500;">
+                📅 Last Update: {now_str_LT} (TPE) <span style="opacity: 0.5;">|</span> {now_str_UTC} (UTC)
+                </div>
             </div>
             <div style="background:#f8f9fa; border:1px solid #ddd; padding:15px; margin-bottom:20px;">
-                <strong style="color:{status_color};">📊 監控狀態: {'發現 ' + str(count) + ' 則新警告' if count > 0 else '無新警告'}</strong><br>
-                <span style="font-size:13px; color:#666;">執行時間: {duration:.2f} 秒</span>
+                <strong style="color:{status_color};">📊 航行警告報告: {'新增 ' + str(count) + ' 個新警告' if count > 0 else '無新增航行警告'}</strong><br>
             </div>
         """
         
         if count > 0:
             html += f"""<table style="width:100%; border-collapse:collapse; font-size:14px; border:1px solid #ddd;">
                 <tr style="background:#f0f4f8; text-align:left;">
-                    <th style="padding:10px; border-bottom:2px solid #ccc;">地區</th>
-                    <th style="padding:10px; border-bottom:2px solid #ccc;">標題</th>
-                    <th style="padding:10px; border-bottom:2px solid #ccc;">時間</th>
+                    <th style="padding:10px; border-bottom:2px solid #ccc;">發佈海事局(Issuing MSA)</th>
+                    <th style="padding:10px; border-bottom:2px solid #ccc;">航行警告標題(Navigation Warning Title)</th>
+                    <th style="padding:10px; border-bottom:2px solid #ccc;">發佈時間(Published Time)</th>
                 </tr>"""
             
             for i, item in enumerate(self.captured_warnings_data):
                 bg = "#fff" if i % 2 == 0 else "#f9f9f9"
                 kw_html = "".join([
-                    f"<span style='background:#fff3cd; padding:2px 5px; margin-right:5px; border-radius:3px; font-size:12px;'>{k}</span>" 
+                    f"<span style='background:#fff3cd; padding:2px 5px; margin-right:5px; border-radius:3px; font-size:12px;'>關鍵字:{k}</span>" 
                     for k in item['keywords']
                 ])
                 html += f"""<tr style="background:{bg};">
@@ -746,3 +753,4 @@ if __name__ == "__main__":
     
     # 執行
     scraper.run()
+
