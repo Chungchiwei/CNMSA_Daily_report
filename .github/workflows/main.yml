@@ -1,0 +1,54 @@
+name: Daily CNMSA Navigation Warning Report
+
+# 設定觸發條件
+on:
+  schedule:
+    # 每天台灣時間 08:00 (UTC 00:00) 執行
+    - cron: '0 0 * * *'
+  
+  # 允許手動按按鈕執行 (測試用)
+  workflow_dispatch:
+
+jobs:
+  run-cnmsa-bot:
+    runs-on: ubuntu-latest # 使用 Linux 虛擬機
+
+    steps:
+      # 1. 下載程式碼
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. 設定 Python 環境
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      # 3. 設定 Chrome 瀏覽器 (Selenium 需要)
+      # GitHub 的 ubuntu-latest 雖然內建 Chrome，但明確安裝/更新比較保險
+      - name: Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      # 4. 安裝套件
+      # 您的新程式碼需要 selenium, requests, python-dotenv
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install selenium requests python-dotenv
+          # 如果您有 requirements.txt 也可以保留這行，沒有的話可刪除
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # 5. 執行 CNMSA 監控程式
+      - name: Run CNMSA Script
+        env:
+          # 從 GitHub Secrets 讀取敏感資訊，注入到環境變數
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          # 這裡設定 TARGET_EMAIL，讓程式碼可以讀取 (如果您程式碼有寫 os.getenv('TARGET_EMAIL'))
+          TARGET_EMAIL: 'harry_chung@wanhai.com' 
+        run: |
+          # 請確認您的 Python 檔名是否為 n8n_msa_monitor.py，若不同請自行修改
+          python n8n_msa_monitor.py
