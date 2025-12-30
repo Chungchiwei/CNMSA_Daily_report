@@ -40,13 +40,13 @@ class DatabaseManager:
         
         conn.commit()
         conn.close()
-        print(f"✓ 資料庫初始化完成: {self.db_name}")
+        print(f"✅ 資料庫初始化完成: {self.db_name}")
     
     def save_warning(self, data):
         """
         儲存警告資料到資料庫
         data: tuple (maritime_bureau, title, link, publish_time, keywords_matched, scrape_time)
-        返回: (success: bool, warning_id: int or None)
+        返回: (is_new: bool, warning_id: int or None)
         """
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
@@ -63,7 +63,6 @@ class DatabaseManager:
             # 檢查是否真的插入了新資料
             if cursor.rowcount > 0:
                 warning_id = cursor.lastrowid
-                print(f"✓ 新警告已儲存 (ID: {warning_id}): {data[1][:50]}...")
                 return True, warning_id
             else:
                 # 資料已存在，獲取現有 ID
@@ -77,7 +76,7 @@ class DatabaseManager:
                 return False, None
                 
         except Exception as e:
-            print(f"✗ 資料庫儲存錯誤: {e}")
+            print(f"❌ 資料庫儲存錯誤: {e}")
             return False, None
         finally:
             conn.close()
@@ -99,7 +98,7 @@ class DatabaseManager:
             return results
             
         except Exception as e:
-            print(f"✗ 查詢未通知警告時出錯: {e}")
+            print(f"❌ 查詢未通知警告時出錯: {e}")
             return []
         finally:
             conn.close()
@@ -117,10 +116,16 @@ class DatabaseManager:
             ''', (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), warning_id))
             
             conn.commit()
+            
+            # 檢查是否真的更新了
+            if cursor.rowcount == 0:
+                print(f"⚠️ 警告 ID {warning_id} 不存在或已標記")
+                return False
+            
             return True
             
         except Exception as e:
-            print(f"✗ 標記通知狀態時出錯: {e}")
+            print(f"❌ 標記通知狀態時出錯: {e}")
             return False
         finally:
             conn.close()
@@ -138,7 +143,7 @@ class DatabaseManager:
             return df
             
         except Exception as e:
-            print(f"✗ 查詢所有警告時出錯: {e}")
+            print(f"❌ 查詢所有警告時出錯: {e}")
             return pd.DataFrame()
         finally:
             conn.close()
@@ -152,11 +157,15 @@ class DatabaseManager:
         df = self.get_all_warnings()
         
         if not df.empty:
-            df.to_excel(filename, index=False, engine='openpyxl')
-            print(f"✓ Excel 檔案已儲存: {filename}")
-            return True
+            try:
+                df.to_excel(filename, index=False, engine='openpyxl')
+                print(f"✅ Excel 檔案已儲存: {filename}")
+                return True
+            except Exception as e:
+                print(f"❌ Excel 匯出失敗: {e}")
+                return False
         else:
-            print("✗ 沒有資料可以匯出")
+            print("⚠️ 沒有資料可以匯出")
             return False
     
     def get_statistics(self):
@@ -204,7 +213,7 @@ class DatabaseManager:
             }
             
         except Exception as e:
-            print(f"✗ 獲取統計資訊時出錯: {e}")
+            print(f"❌ 獲取統計資訊時出錯: {e}")
             return None
         finally:
             conn.close()
@@ -215,7 +224,7 @@ class DatabaseManager:
         
         if stats:
             print("\n" + "=" * 60)
-            print("資料庫統計資訊")
+            print("📊 資料庫統計資訊")
             print("=" * 60)
             print(f"總警告數: {stats['total']}")
             print(f"已通知: {stats['notified']}")
