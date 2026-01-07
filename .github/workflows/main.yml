@@ -7,7 +7,7 @@ on:
 
 jobs:
   scrape:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 改用 Ubuntu 22.04 (更穩定)
     
     steps:
     - name: 📥 Checkout code
@@ -27,17 +27,26 @@ jobs:
           gnupg \
           unzip \
           curl \
-          libgeos-dev \
-          libproj-dev \
-          proj-data \
-          proj-bin \
-          fonts-noto-cjk \
           xvfb \
           libxi6 \
           libgconf-2-4 \
           libnss3 \
           libxss1 \
-          libasound2
+          libappindicator3-1 \
+          libasound2 \
+          libatk-bridge2.0-0 \
+          libgtk-3-0 \
+          libx11-xcb1 \
+          libxcomposite1 \
+          libxcursor1 \
+          libxdamage1 \
+          libxfixes3 \
+          libxrandr2 \
+          libgbm1 \
+          libpango-1.0-0 \
+          libcairo2 \
+          fonts-liberation \
+          fonts-noto-cjk
     
     - name: 🌐 Install Chrome
       run: |
@@ -49,16 +58,24 @@ jobs:
     
     - name: 📦 Install Python dependencies
       run: |
-        pip install --upgrade pip
+        pip install --upgrade pip setuptools wheel
         pip install -r requirements.txt
     
     - name: 🔍 Verify installations
       run: |
-        python -c "import selenium; print('Selenium:', selenium.__version__)"
-        python -c "import bs4; print('BeautifulSoup4:', bs4.__version__)"
-        python -c "import requests; print('Requests:', requests.__version__)"
-        python -c "try: import matplotlib; print('Matplotlib:', matplotlib.__version__); except: print('Matplotlib: Not installed')"
-        python -c "try: import cartopy; print('Cartopy:', cartopy.__version__); except: print('Cartopy: Not installed')"
+        echo "=== Python Version ==="
+        python --version
+        echo ""
+        echo "=== Chrome Version ==="
+        google-chrome --version
+        echo ""
+        echo "=== Python Packages ==="
+        python -c "import selenium; print('✅ Selenium:', selenium.__version__)"
+        python -c "import bs4; print('✅ BeautifulSoup4:', bs4.__version__)"
+        python -c "import requests; print('✅ Requests:', requests.__version__)"
+        python -c "import pandas; print('✅ Pandas:', pandas.__version__)"
+        python -c "try: import matplotlib; print('✅ Matplotlib:', matplotlib.__version__); except: print('⚠️ Matplotlib: Not installed')"
+        python -c "try: import cartopy; print('✅ Cartopy:', cartopy.__version__); except: print('⚠️ Cartopy: Not installed')"
     
     - name: 🚀 Run scraper
       env:
@@ -67,15 +84,24 @@ jobs:
         MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
       run: |
-        xvfb-run -a python n8n_msa_monitor.py
+        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python n8n_msa_monitor.py
     
     - name: 📤 Upload artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: scrape-results
+        name: scrape-results-${{ github.run_number }}
         path: |
           *.db
           *.xlsx
           maps/*.png
         retention-days: 7
+    
+    - name: 📊 Upload logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: error-logs-${{ github.run_number }}
+        path: |
+          *.log
+        retention-days: 3
