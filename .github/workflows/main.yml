@@ -20,7 +20,7 @@ jobs:
         cache: 'pip'  # 啟用 pip cache
         cache-dependency-path: 'requirements.txt'
     
-    - name: 📦 Install system dependencies (minimal)
+    - name: 📦 Install system dependencies
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq --no-install-recommends \
@@ -48,8 +48,6 @@ jobs:
         MAIL_USER: ${{ secrets.MAIL_USER }}
         MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
-      run: |
-        xvfb-run -a python n8n_msa_monitor.py
       timeout-minutes: 20
     
     - name: 📤 Upload artifacts
