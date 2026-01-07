@@ -2,80 +2,45 @@ name: MSA Navigation Warnings Monitor
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # 每6小時執行一次
-  workflow_dispatch:  # 允許手動觸發
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
-    runs-on: ubuntu-22.04  # 改用 Ubuntu 22.04 (更穩定)
+    runs-on: ubuntu-22.04
     
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 🐍 Setup Python
+    - name: 🐍 Setup Python with cache
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
+        cache: 'pip'  # 啟用 pip cache
+        cache-dependency-path: 'requirements.txt'
     
-    - name: 📦 Install system dependencies
+    - name: 📦 Install system dependencies (minimal)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends \
           wget \
           gnupg \
-          unzip \
-          curl \
           xvfb \
-          libxi6 \
-          libgconf-2-4 \
           libnss3 \
           libxss1 \
-          libappindicator3-1 \
-          libasound2 \
-          libatk-bridge2.0-0 \
-          libgtk-3-0 \
-          libx11-xcb1 \
-          libxcomposite1 \
-          libxcursor1 \
-          libxdamage1 \
-          libxfixes3 \
-          libxrandr2 \
           libgbm1 \
-          libpango-1.0-0 \
-          libcairo2 \
-          fonts-liberation \
-          fonts-noto-cjk
+          fonts-liberation
     
-    - name: 🌐 Install Chrome
-      run: |
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        google-chrome --version
+    - name: 🌐 Install Chrome (cached)
+      uses: browser-actions/setup-chrome@latest
+      with:
+        chrome-version: stable
     
-    - name: 📦 Install Python dependencies
+    - name: 📦 Install Python dependencies (optimized)
       run: |
-        pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
-    
-    - name: 🔍 Verify installations
-      run: |
-        echo "=== Python Version ==="
-        python --version
-        echo ""
-        echo "=== Chrome Version ==="
-        google-chrome --version
-        echo ""
-        echo "=== Python Packages ==="
-        python -c "import selenium; print('✅ Selenium:', selenium.__version__)"
-        python -c "import bs4; print('✅ BeautifulSoup4:', bs4.__version__)"
-        python -c "import requests; print('✅ Requests:', requests.__version__)"
-        python -c "import pandas; print('✅ Pandas:', pandas.__version__)"
-        python -c "try: import matplotlib; print('✅ Matplotlib:', matplotlib.__version__); except: print('⚠️ Matplotlib: Not installed')"
-        python -c "try: import cartopy; print('✅ Cartopy:', cartopy.__version__); except: print('⚠️ Cartopy: Not installed')"
+        pip install --upgrade pip
+        pip install --no-cache-dir -r requirements-minimal.txt
     
     - name: 🚀 Run scraper
       env:
@@ -84,24 +49,16 @@ jobs:
         MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
       run: |
-        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python n8n_msa_monitor.py
+        xvfb-run -a python n8n_msa_monitor.py
+      timeout-minutes: 20
     
     - name: 📤 Upload artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: scrape-results-${{ github.run_number }}
+        name: results-${{ github.run_number }}
         path: |
           *.db
           *.xlsx
           maps/*.png
         retention-days: 7
-    
-    - name: 📊 Upload logs
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: error-logs-${{ github.run_number }}
-        path: |
-          *.log
-        retention-days: 3
