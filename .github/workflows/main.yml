@@ -1,57 +1,81 @@
-name: MSA Monitor
+name: MSA Navigation Warnings Monitor
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 台灣時間 08:00 (UTC 00:00)
-  workflow_dispatch:
+    - cron: '0 */6 * * *'  # 每6小時執行一次
+  workflow_dispatch:  # 允許手動觸發
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4  # 已更新至 v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5  # 已更新至 v5
-        with:
-          python-version: '3.10'
-      
-      # ========== 關鍵：安裝 Chrome 和 ChromeDriver ==========
-      - name: Install Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg
-          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          
-          # 驗證安裝
-          google-chrome --version
-      
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install selenium webdriver-manager requests python-dotenv pandas openpyxl
-      
-      - name: Run scraper
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          MAIL_USER: ${{ secrets.MAIL_USER }}
-          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
-          TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
-        run: |
-          python n8n_msa_monitor.py
-      
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4  # 關鍵修正：已更新至 v4
-        with:
-          name: reports
-          path: |
-            *.xlsx
-            *.db
-            error_log.txt
-            error_screenshot.png
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: 📦 Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          wget \
+          gnupg \
+          unzip \
+          curl \
+          libgeos-dev \
+          libproj-dev \
+          proj-data \
+          proj-bin \
+          fonts-noto-cjk \
+          xvfb \
+          libxi6 \
+          libgconf-2-4 \
+          libnss3 \
+          libxss1 \
+          libasound2
+    
+    - name: 🌐 Install Chrome
+      run: |
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+        google-chrome --version
+    
+    - name: 📦 Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🔍 Verify installations
+      run: |
+        python -c "import selenium; print('Selenium:', selenium.__version__)"
+        python -c "import bs4; print('BeautifulSoup4:', bs4.__version__)"
+        python -c "import requests; print('Requests:', requests.__version__)"
+        python -c "try: import matplotlib; print('Matplotlib:', matplotlib.__version__); except: print('Matplotlib: Not installed')"
+        python -c "try: import cartopy; print('Cartopy:', cartopy.__version__); except: print('Cartopy: Not installed')"
+    
+    - name: 🚀 Run scraper
+      env:
+        TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        MAIL_USER: ${{ secrets.MAIL_USER }}
+        MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+        TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
+      run: |
+        xvfb-run -a python n8n_msa_monitor.py
+    
+    - name: 📤 Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scrape-results
+        path: |
+          *.db
+          *.xlsx
+          maps/*.png
+        retention-days: 7
