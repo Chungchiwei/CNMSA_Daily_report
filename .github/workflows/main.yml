@@ -2,16 +2,24 @@ name: MSA Navigation Warnings Monitor
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # 每6小時執行一次
+    - cron: '0 */12 * * *'  # 每12小時執行一次 (UTC時間)
   workflow_dispatch:  # 允許手動觸發
+    inputs:
+      debug_mode:
+        description: '啟用除錯模式'
+        required: false
+        default: 'false'
 
 jobs:
   scrape:
-    runs-on: ubuntu-22.04  # 改用 Ubuntu 22.04 (更穩定)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30  # 設定超時時間
     
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 1  # 只抓取最新版本，加快速度
     
     - name: 🐍 Setup Python
       uses: actions/setup-python@v5
@@ -19,75 +27,135 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
     
-    - name: 📦 Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          wget \
-          gnupg \
-          unzip \
-          curl \
-          xvfb \
-          libxi6 \
-          libgconf-2-4 \
-          libnss3 \
-          libxss1 \
-          libappindicator3-1 \
-          libasound2 \
-          libatk-bridge2.0-0 \
-          libgtk-3-0 \
-          libx11-xcb1 \
-          libxcomposite1 \
-          libxcursor1 \
-          libxdamage1 \
-          libxfixes3 \
-          libxrandr2 \
-          libgbm1 \
-          libpango-1.0-0 \
-          libcairo2 \
-          fonts-liberation \
-          fonts-noto-cjk
+    - name: 📦 Cache system dependencies
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: >
+          wget gnupg unzip curl xvfb libxi6 libgconf-2-4 libnss3 
+          libxss1 libappindicator3-1 libasound2 libatk-bridge2.0-0 
+          libgtk-3-0 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 
+          libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 
+          fonts-liberation fonts-noto-cjk
+        version: 1.0
     
-    - name: 🌐 Install Chrome
-      run: |
-        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-        echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-        sudo apt-get update
-        sudo apt-get install -y google-chrome-stable
-        google-chrome --version
+    - name: 🌐 Setup Chrome and ChromeDriver
+      uses: browser-actions/setup-chrome@latest
+      with:
+        chrome-version: stable
     
     - name: 📦 Install Python dependencies
       run: |
-        pip install --upgrade pip setuptools wheel
-        pip install -r requirements.txt
+        pip install --no-cache-dir --upgrade pip setuptools wheel
+        pip install --no-cache-dir -r requirements.txt
     
     - name: 🔍 Verify installations
       run: |
-        echo "=== Python Version ==="
-        python --version
-        echo ""
-        echo "=== Chrome Version ==="
-        google-chrome --version
-        echo ""
-        echo "=== Python Packages ==="
-        python -c "import selenium; print('✅ Selenium:', selenium.__version__)"
-        python -c "import bs4; print('✅ BeautifulSoup4:', bs4.__version__)"
-        python -c "import requests; print('✅ Requests:', requests.__version__)"
-        python -c "import pandas; print('✅ Pandas:', pandas.__version__)"
-        python -c "try: import matplotlib; print('✅ Matplotlib:', matplotlib.__version__); except: print('⚠️ Matplotlib: Not installed')"
-        python -c "try: import cartopy; print('✅ Cartopy:', cartopy.__version__); except: print('⚠️ Cartopy: Not installed')"
+        echo "::group::System Information"
+        echo "🖥️ OS: $(lsb_release -d | cut -f2)"
+        echo "🐍 Python: $(python --version)"
+        echo "🌐 Chrome: $(google-chrome --version)"
+        echo "💾 Disk Space: $(df -h / | awk 'NR==2 {print $4 " available"}')"
+        echo "🧠 Memory: $(free -h | awk 'NR==2 {print $7 " available"}')"
+        echo "::endgroup::"
+        
+        echo "::group::Python Packages"
+        python -c "
+import sys
+packages = {
+    'selenium': 'Selenium',
+    'bs4': 'BeautifulSoup4',
+    'requests': 'Requests',
+    'pandas': 'Pandas',
+    'openpyxl': 'OpenPyXL',
+    'webdriver_manager': 'WebDriver Manager'
+}
+for module, name in packages.items():
+    try:
+        mod = __import__(module)
+        version = getattr(mod, '__version__', 'unknown')
+        print(f'✅ {name}: {version}')
+    except ImportError:
+        print(f'❌ {name}: Not installed')
+        sys.exit(1)
+"
+        echo "::endgroup::"
     
-    - name: 🚀 Run scraper
+    - name: 🔧 Prepare environment
+      run: |
+        # 建立必要的目錄
+        mkdir -p maps logs
+        
+        # 設定顯示環境變數
+        echo "DISPLAY=:99" >> $GITHUB_ENV
+        
+        # 檢查環境變數
+        if [ -z "${{ secrets.TEAMS_WEBHOOK_URL }}" ]; then
+          echo "⚠️ Warning: TEAMS_WEBHOOK_URL not set"
+        fi
+    
+    - name: 🚀 Run scraper with retry
+      id: scraper
       env:
         TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         MAIL_USER: ${{ secrets.MAIL_USER }}
         MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
+        PYTHONUNBUFFERED: 1
       run: |
-        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python n8n_msa_monitor.py
+        MAX_RETRIES=3
+        RETRY_COUNT=0
+        EXIT_CODE=1
+        
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $EXIT_CODE -ne 0 ]; do
+          echo "::group::執行爬蟲 (嘗試 $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+          
+          if xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -ac" \
+             timeout 25m python n8n_msa_monitor.py 2>&1 | tee logs/scraper_$RETRY_COUNT.log; then
+            EXIT_CODE=0
+            echo "✅ 執行成功"
+          else
+            EXIT_CODE=$?
+            echo "❌ 執行失敗 (Exit Code: $EXIT_CODE)"
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+              echo "⏳ 等待 30 秒後重試..."
+              sleep 30
+            fi
+          fi
+          
+          echo "::endgroup::"
+        done
+        
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "::error::爬蟲執行失敗 (已重試 $MAX_RETRIES 次)"
+          exit 1
+        fi
     
-    - name: 📤 Upload artifacts
+    - name: 📊 Generate summary
       if: always()
+      run: |
+        echo "## 📋 執行摘要" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "*.db" ]; then
+          DB_SIZE=$(du -h *.db 2>/dev/null | cut -f1 | head -1)
+          echo "- 📦 資料庫大小: ${DB_SIZE:-N/A}" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f "*.xlsx" ]; then
+          EXCEL_SIZE=$(du -h *.xlsx 2>/dev/null | cut -f1 | head -1)
+          echo "- 📊 Excel 大小: ${EXCEL_SIZE:-N/A}" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        MAP_COUNT=$(ls maps/*.png 2>/dev/null | wc -l)
+        echo "- 🗺️ 地圖數量: $MAP_COUNT" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "⏰ 執行時間: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+    
+    - name: 📤 Upload results
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: scrape-results-${{ github.run_number }}
@@ -96,12 +164,38 @@ jobs:
           *.xlsx
           maps/*.png
         retention-days: 7
+        if-no-files-found: warn
     
-    - name: 📊 Upload logs
-      if: failure()
+    - name: 📤 Upload logs
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: error-logs-${{ github.run_number }}
+        name: execution-logs-${{ github.run_number }}
         path: |
-          *.log
+          logs/*.log
+          error_log.txt
+          error_screenshot.png
         retention-days: 3
+        if-no-files-found: ignore
+    
+    - name: 🔔 Notify on failure
+      if: failure()
+      run: |
+        echo "::error::❌ 工作流程執行失敗"
+        echo "::error::請檢查日誌以獲取詳細資訊"
+        
+        # 如果有錯誤截圖，顯示提示
+        if [ -f "error_screenshot.png" ]; then
+          echo "::warning::已產生錯誤截圖，請查看 artifacts"
+        fi
+    
+    - name: 🧹 Cleanup
+      if: always()
+      run: |
+        # 清理暫存檔案
+        rm -rf /tmp/.X* /tmp/chrome* 2>/dev/null || true
+        
+        # 顯示最終磁碟使用狀況
+        echo "::group::Final Disk Usage"
+        df -h /
+        echo "::endgroup::"
