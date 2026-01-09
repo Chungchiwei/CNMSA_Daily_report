@@ -39,7 +39,7 @@ class KeywordManager:
             "軍事活動", "軍事行動", "軍事封鎖", "軍事禁區",
             # 英文
             "MILITARY EXERCISES", "NAVAL EXERCISES", "FIRING EXERCISES", 
-            "LIVE FIRING", "MILITARY ACTIVITY", "MILITARY OPERATIONS", 
+            "LIVE FIRING", "MILITARY ACTIVITY", "MILITARY OPERATIONS","MILITARY MISSION", 
             "MILITARY BLOCKADE", "MILITARY ZONE"
         ]
         
@@ -512,4 +512,5 @@ def interactive_menu():
 
 if __name__ == "__main__":
     interactive_menu()
+
 
