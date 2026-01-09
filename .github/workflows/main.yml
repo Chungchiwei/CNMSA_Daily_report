@@ -13,13 +13,13 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30  # 設定超時時間
+    timeout-minutes: 30
     
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 1  # 只抓取最新版本，加快速度
+        fetch-depth: 1
     
     - name: 🐍 Setup Python
       uses: actions/setup-python@v5
@@ -27,16 +27,16 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
     
-    - name: 📦 Cache system dependencies
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: >
-          wget gnupg unzip curl xvfb libxi6 libgconf-2-4 libnss3 
-          libxss1 libappindicator3-1 libasound2 libatk-bridge2.0-0 
-          libgtk-3-0 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 
-          libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 
+    # 建議：暫時移除 apt cache，因為它常因 lock file 導致流程直接失敗
+    # 如果一定要用，請確保它不會因為 cache miss 而報錯
+    - name: 📦 Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget unzip curl xvfb libxi6 libgconf-2-4 libnss3 \
+          libxss1 libappindicator3-1 libasound2 libatk-bridge2.0-0 \
+          libgtk-3-0 libx11-xcb1 libxcomposite1 libxcursor1 libxdamage1 \
+          libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 \
           fonts-liberation fonts-noto-cjk
-        version: 1.0
     
     - name: 🌐 Setup Chrome and ChromeDriver
       uses: browser-actions/setup-chrome@latest
@@ -48,72 +48,49 @@ jobs:
         pip install --no-cache-dir --upgrade pip setuptools wheel
         pip install --no-cache-dir -r requirements.txt
     
-    - name: 🔍 Verify installations
-      run: |
-        echo "::group::System Information"
-        echo "🖥️ OS: $(lsb_release -d | cut -f2)"
-        echo "🐍 Python: $(python --version)"
-        echo "🌐 Chrome: $(google-chrome --version)"
-        echo "💾 Disk Space: $(df -h / | awk 'NR==2 {print $4 " available"}')"
-        echo "🧠 Memory: $(free -h | awk 'NR==2 {print $7 " available"}')"
-        echo "::endgroup::"
-        
-        echo "::group::Python Packages"
-        python -c "
-import sys
-packages = {
-    'selenium': 'Selenium',
-    'bs4': 'BeautifulSoup4',
-    'requests': 'Requests',
-    'pandas': 'Pandas',
-    'openpyxl': 'OpenPyXL',
-    'webdriver_manager': 'WebDriver Manager'
-}
-for module, name in packages.items():
-    try:
-        mod = __import__(module)
-        version = getattr(mod, '__version__', 'unknown')
-        print(f'✅ {name}: {version}')
-    except ImportError:
-        print(f'❌ {name}: Not installed')
-        sys.exit(1)
-"
-        echo "::endgroup::"
-    
     - name: 🔧 Prepare environment
       run: |
-        # 建立必要的目錄
         mkdir -p maps logs
+        # 讓 Python 腳本知道 Chrome 安裝在哪裡 (setup-chrome 會設定此路徑)
+        echo "CHROME_BINARY_LOCATION=$(which google-chrome)" >> $GITHUB_ENV
         
-        # 設定顯示環境變數
-        echo "DISPLAY=:99" >> $GITHUB_ENV
-        
-        # 檢查環境變數
+        # 檢查 Secret 是否存在 (除錯用)
         if [ -z "${{ secrets.TEAMS_WEBHOOK_URL }}" ]; then
-          echo "⚠️ Warning: TEAMS_WEBHOOK_URL not set"
+          echo "⚠️ Warning: TEAMS_WEBHOOK_URL is NOT set in Secrets!"
+        else
+          echo "✅ TEAMS_WEBHOOK_URL is detected."
         fi
     
     - name: 🚀 Run scraper with retry
       id: scraper
+      shell: bash
       env:
         TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         MAIL_USER: ${{ secrets.MAIL_USER }}
         MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
         PYTHONUNBUFFERED: 1
+        # 傳遞 Chrome 路徑給 Python (如果您的 Python 程式有使用此變數)
+        CHROME_PATH: /usr/bin/google-chrome 
       run: |
         MAX_RETRIES=3
         RETRY_COUNT=0
         EXIT_CODE=1
         
+        # 啟用 pipefail，這樣如果 Python 失敗，整個指令才會回傳失敗，而不是回傳 tee 的成功
+        set -o pipefail
+        
         while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $EXIT_CODE -ne 0 ]; do
           echo "::group::執行爬蟲 (嘗試 $((RETRY_COUNT + 1))/$MAX_RETRIES)"
           
+          # 使用 xvfb-run 執行，並將輸出同時顯示並寫入 log
+          # 注意：這裡修正了 pipe 掩蓋錯誤代碼的問題
           if xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24 -ac" \
              timeout 25m python n8n_msa_monitor.py 2>&1 | tee logs/scraper_$RETRY_COUNT.log; then
             EXIT_CODE=0
             echo "✅ 執行成功"
           else
+            # 這裡抓到的 $? 會是 python 的錯誤碼 (因為 set -o pipefail)
             EXIT_CODE=$?
             echo "❌ 執行失敗 (Exit Code: $EXIT_CODE)"
             RETRY_COUNT=$((RETRY_COUNT + 1))
@@ -127,6 +104,9 @@ for module, name in packages.items():
           echo "::endgroup::"
         done
         
+        # 恢復 pipefail 設定 (雖然後面沒指令了，但這是好習慣)
+        set +o pipefail
+        
         if [ $EXIT_CODE -ne 0 ]; then
           echo "::error::爬蟲執行失敗 (已重試 $MAX_RETRIES 次)"
           exit 1
@@ -138,12 +118,17 @@ for module, name in packages.items():
         echo "## 📋 執行摘要" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        if [ -f "*.db" ]; then
+        # 修正：安全的檢查檔案是否存在的方法 (避免 Wildcard Expansion 錯誤)
+        count_db=$(ls *.db 2>/dev/null | wc -l)
+        if [ "$count_db" != "0" ]; then
           DB_SIZE=$(du -h *.db 2>/dev/null | cut -f1 | head -1)
           echo "- 📦 資料庫大小: ${DB_SIZE:-N/A}" >> $GITHUB_STEP_SUMMARY
+        else
+           echo "- 📦 無產生資料庫檔案" >> $GITHUB_STEP_SUMMARY
         fi
         
-        if [ -f "*.xlsx" ]; then
+        count_xlsx=$(ls *.xlsx 2>/dev/null | wc -l)
+        if [ "$count_xlsx" != "0" ]; then
           EXCEL_SIZE=$(du -h *.xlsx 2>/dev/null | cut -f1 | head -1)
           echo "- 📊 Excel 大小: ${EXCEL_SIZE:-N/A}" >> $GITHUB_STEP_SUMMARY
         fi
@@ -177,25 +162,3 @@ for module, name in packages.items():
           error_screenshot.png
         retention-days: 3
         if-no-files-found: ignore
-    
-    - name: 🔔 Notify on failure
-      if: failure()
-      run: |
-        echo "::error::❌ 工作流程執行失敗"
-        echo "::error::請檢查日誌以獲取詳細資訊"
-        
-        # 如果有錯誤截圖，顯示提示
-        if [ -f "error_screenshot.png" ]; then
-          echo "::warning::已產生錯誤截圖，請查看 artifacts"
-        fi
-    
-    - name: 🧹 Cleanup
-      if: always()
-      run: |
-        # 清理暫存檔案
-        rm -rf /tmp/.X* /tmp/chrome* 2>/dev/null || true
-        
-        # 顯示最終磁碟使用狀況
-        echo "::group::Final Disk Usage"
-        df -h /
-        echo "::endgroup::"
