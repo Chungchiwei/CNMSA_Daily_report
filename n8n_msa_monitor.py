@@ -413,13 +413,29 @@ class TWMaritimePortBureauScraper:
         self.cutoff_date = datetime.now() - timedelta(days=days)
         self.new_warnings = []
         self.captured_warnings_data = []
+        
+        # 定義要抓取的分類 (礙航公告和射擊公告)
+        self.target_categories = {
+            '333': '礙航公告',
+            '334': '射擊公告'
+        }
     
     def check_keywords(self, text):
         """檢查文字中是否包含關鍵字"""
-        return [k for k in self.keywords if k.lower() in text.lower()]
+        # 除了原有關鍵字,也要檢查是否包含「礙航」或「射擊」
+        matched = [k for k in self.keywords if k.lower() in text.lower()]
+        
+        # 額外檢查礙航和射擊關鍵字
+        if '礙航' in text or '射擊' in text:
+            if '礙航' in text and '礙航' not in matched:
+                matched.append('礙航')
+            if '射擊' in text and '射擊' not in matched:
+                matched.append('射擊')
+        
+        return matched
     
     def parse_date(self, date_string):
-        """解析日期字串（支援民國年和西元年）"""
+        """解析日期字串(支援民國年和西元年)"""
         try:
             date_string = date_string.strip()
             
@@ -455,14 +471,17 @@ class TWMaritimePortBureauScraper:
             return parsed_date >= self.cutoff_date
         return True
     
-    def get_notices(self, page=1):
+    def get_notices(self, page=1, base_category_id=None):
         """爬取指定頁面的航行警告"""
         try:
             params = self.params.copy()
             if page > 1:
                 params['page'] = page
+            if base_category_id:
+                params['baseCategoryId'] = base_category_id
             
-            print(f"  正在請求台灣航港局第 {page} 頁...")
+            category_name = self.target_categories.get(base_category_id, '全部') if base_category_id else '全部'
+            print(f"  正在請求台灣航港局 [{category_name}] 第 {page} 頁...")
             
             response = requests.get(
                 self.base_url, 
@@ -485,7 +504,7 @@ class TWMaritimePortBureauScraper:
             if len(dl_list) <= 1:
                 return []
             
-            # 跳過第一個 dl（標題列）
+            # 跳過第一個 dl(標題列)
             for dl in dl_list[1:]:
                 try:
                     dt_list = dl.find_all('dt')
@@ -513,19 +532,29 @@ class TWMaritimePortBureauScraper:
                         title = dd.get_text(strip=True)
                         link = ''
                     
-                    # 檢查關鍵字
+                    # 檢查關鍵字(包含礙航和射擊)
                     matched_keywords = self.check_keywords(title)
                     if not matched_keywords:
                         continue
                     
+                    notices.append({
+                        'number': number,
+                        'date': date,
+                        'title': title,
+                        'unit': unit,
+                        'link': link,
+                        'keywords': matched_keywords,
+                        'category': category_name
+                    })
+                    
                     # 存入資料庫
                     db_data = (
-                        unit or "台灣航港局",  # bureau
-                        title,                # title
-                        link,                 # link
-                        date,                 # publish_time
-                        ', '.join(matched_keywords),  # keywords
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # scrape_time
+                        unit or "台灣航港局",
+                        title,
+                        link,
+                        date,
+                        ', '.join(matched_keywords),
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     )
                     
                     is_new, w_id = self.db_manager.save_warning(db_data, source_type="TW_MPB")
@@ -539,9 +568,10 @@ class TWMaritimePortBureauScraper:
                             'link': link,
                             'time': date,
                             'keywords': matched_keywords,
-                            'source': 'TW_MPB'
+                            'source': 'TW_MPB',
+                            'category': category_name
                         })
-                        print(f"    ✅ 新警告: {title[:40]}...")
+                        print(f"    ✅ 新警告 [{category_name}]: {title[:40]}...")
                     
                 except Exception as e:
                     print(f"    ⚠️ 處理項目時出錯: {e}")
@@ -557,24 +587,28 @@ class TWMaritimePortBureauScraper:
         """爬取所有頁面"""
         print(f"\n🇹🇼 開始爬取台灣航港局航行警告...")
         
-        for page in range(1, max_pages + 1):
-            notices = self.get_notices(page)
+        # 爬取礙航公告和射擊公告
+        for category_id, category_name in self.target_categories.items():
+            print(f"\n  📋 爬取分類: {category_name}")
             
-            if not notices:
-                print(f"  第 {page} 頁沒有資料，停止爬取")
-                break
-            
-            # 檢查是否已超出日期範圍
-            dates = [self.parse_date(n.get('發布日期', '')) for n in notices if n.get('發布日期')]
-            valid_dates = [d for d in dates if d is not None]
-            
-            if valid_dates and min(valid_dates) < self.cutoff_date:
-                print(f"  已到達日期範圍外")
-                break
-            
-            time.sleep(2)  # 避免請求過快
+            for page in range(1, max_pages + 1):
+                notices = self.get_notices(page, category_id)
+                
+                if not notices:
+                    print(f"    第 {page} 頁沒有符合條件的資料")
+                    break
+                
+                # 檢查是否已超出日期範圍
+                dates = [self.parse_date(n.get('date', '')) for n in notices]
+                valid_dates = [d for d in dates if d is not None]
+                
+                if valid_dates and min(valid_dates) < self.cutoff_date:
+                    print(f"    已到達日期範圍外")
+                    break
+                
+                time.sleep(2)  # 避免請求過快
         
-        print(f"🇹🇼 台灣航港局爬取完成，新增 {len(self.new_warnings)} 筆警告")
+        print(f"\n🇹🇼 台灣航港局爬取完成,新增 {len(self.new_warnings)} 筆警告")
         return self.new_warnings
 
 
