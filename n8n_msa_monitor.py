@@ -497,6 +497,7 @@ class TWMaritimePortBureauScraper:
             
             category_name = self.target_categories.get(base_category_id, '全部') if base_category_id else '全部'
             print(f"  正在請求台灣航港局 [{category_name}] 第 {page} 頁...")
+            print(f"    URL: {self.base_url}?{requests.compat.urlencode(params)}")
             
             response = requests.get(
                 self.base_url, 
@@ -510,16 +511,32 @@ class TWMaritimePortBureauScraper:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # 修正：尋找 class 包含 'contents' 的 div
+            # 可能是 'contents' 或 'contents contents2'
             contents_div = soup.find('div', class_='contents')
             if not contents_div:
+                # 嘗試使用 CSS selector
+                contents_div = soup.select_one('#table > div.contents')
+            if not contents_div:
+                # 再嘗試找包含 contents2 的
+                contents_div = soup.select_one('div.contents.contents2')
+            
+            if not contents_div:
                 print(f"    ⚠️ 找不到 contents div")
+                print(f"    🔍 嘗試列出所有 div:")
+                all_divs = soup.find_all('div', limit=10)
+                for div in all_divs:
+                    print(f"      - {div.get('class', [])} | {div.get('id', '')}")
                 return {'has_data': False, 'notices': [], 'processed': 0}
             
+            print(f"    ✅ 找到 contents div: {contents_div.get('class')}")
+            
+            # 尋找所有 dl 元素
             dl_list = contents_div.find_all('dl')
             print(f"    📋 找到 {len(dl_list)} 個 dl 元素")
             
             if len(dl_list) <= 1:
-                print(f"    ⚠️ 沒有資料列 (只有標題列)")
+                print(f"    ⚠️ 沒有資料列 (只有標題列或無資料)")
                 return {'has_data': False, 'notices': [], 'processed': 0}
             
             notices = []
@@ -533,11 +550,13 @@ class TWMaritimePortBureauScraper:
                     dt_list = dl.find_all('dt')
                     dd = dl.find('dd')
                     
-                    if len(dt_list) < 3 or not dd:
+                    if len(dt_list) < 2 or not dd:  # 至少要有編號和日期
+                        print(f"    ⚠️ 項目 {idx} 格式不符: dt={len(dt_list)}, dd={dd is not None}")
                         continue
                     
                     processed_count += 1
                     
+                    # 提取資料
                     number = dt_list[0].get_text(strip=True)
                     date = dt_list[1].get_text(strip=True)
                     unit = dt_list[2].get_text(strip=True) if len(dt_list) > 2 else ''
@@ -553,7 +572,7 @@ class TWMaritimePortBureauScraper:
                         title = dd.get_text(strip=True)
                         link = ''
                     
-                    print(f"    [{idx}] {number} | {date} | {title[:30]}...")
+                    print(f"    [{idx}] {number} | {date} | {unit} | {title[:30]}...")
                     
                     # 檢查日期範圍
                     if not self.is_within_date_range(date):
@@ -629,6 +648,7 @@ class TWMaritimePortBureauScraper:
         """爬取所有頁面"""
         print(f"\n🇹🇼 開始爬取台灣航港局航行警告...")
         print(f"  🎯 目標分類: {', '.join(self.target_categories.values())}")
+        print(f"  🔑 關鍵字列表: {', '.join(self.keywords)}")
         
         # 爬取礙航公告和射擊公告
         for category_id, category_name in self.target_categories.items():
@@ -645,7 +665,7 @@ class TWMaritimePortBureauScraper:
                 # 如果處理的資料數量少於預期,可能已經到最後一頁
                 if result['processed'] < 15:  # 預設每頁15筆
                     print(f"    ℹ️ 第 {page} 頁資料不足 ({result['processed']} 筆),可能是最後一頁")
-                    break
+                    # 不要 break，繼續下一頁確認
                 
                 time.sleep(2)  # 避免請求過快
         
@@ -653,7 +673,7 @@ class TWMaritimePortBureauScraper:
         print(f"  📊 總計新增: {len(self.new_warnings)} 筆警告")
         print(f"  📝 詳細資料: {len(self.captured_warnings_data)} 筆")
         
-        return self.new_warnings
+        return self.new_warnings, self.captured_warnings_data
 
 
 # ==================== 3. 修改後的中國海事局爬蟲 ====================
