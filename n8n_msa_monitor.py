@@ -391,6 +391,7 @@ class GmailRelayNotifier:
             print(f"❌ 錯誤通知郵件發送失敗: {e}")
             return False
 # ==================== 2. 台灣航港局爬蟲類別 ====================
+# ==================== 2. 台灣航港局爬蟲類別 ====================
 class TWMaritimePortBureauScraper:
     def __init__(self, db_manager, keyword_manager, teams_notifier, days=3):
         self.db_manager = db_manager
@@ -475,7 +476,7 @@ class TWMaritimePortBureauScraper:
     def is_within_date_range(self, date_string):
         """檢查日期是否在最近N天內"""
         if not date_string:
-            return True  # 如果沒有日期,預設為符合條件
+            return True
         
         parsed_date = self.parse_date(date_string)
         if parsed_date:
@@ -484,7 +485,7 @@ class TWMaritimePortBureauScraper:
                 print(f"    ⏭️ 跳過舊資料: {date_string} (早於 {self.cutoff_date.strftime('%Y-%m-%d')})")
             return is_valid
         
-        return True  # 解析失敗時預設為符合條件
+        return True
     
     def get_notices(self, page=1, base_category_id=None):
         """爬取指定頁面的航行警告"""
@@ -497,7 +498,6 @@ class TWMaritimePortBureauScraper:
             
             category_name = self.target_categories.get(base_category_id, '全部') if base_category_id else '全部'
             print(f"  正在請求台灣航港局 [{category_name}] 第 {page} 頁...")
-            print(f"    URL: {self.base_url}?{requests.compat.urlencode(params)}")
             
             response = requests.get(
                 self.base_url, 
@@ -511,32 +511,25 @@ class TWMaritimePortBureauScraper:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 修正：尋找 class 包含 'contents' 的 div
-            # 可能是 'contents' 或 'contents contents2'
+            # 尋找 contents div (可能有多個 class)
             contents_div = soup.find('div', class_='contents')
             if not contents_div:
-                # 嘗試使用 CSS selector
                 contents_div = soup.select_one('#table > div.contents')
             if not contents_div:
-                # 再嘗試找包含 contents2 的
                 contents_div = soup.select_one('div.contents.contents2')
             
             if not contents_div:
                 print(f"    ⚠️ 找不到 contents div")
-                print(f"    🔍 嘗試列出所有 div:")
-                all_divs = soup.find_all('div', limit=10)
-                for div in all_divs:
-                    print(f"      - {div.get('class', [])} | {div.get('id', '')}")
                 return {'has_data': False, 'notices': [], 'processed': 0}
             
-            print(f"    ✅ 找到 contents div: {contents_div.get('class')}")
+            print(f"    ✅ 找到 contents div")
             
             # 尋找所有 dl 元素
             dl_list = contents_div.find_all('dl')
             print(f"    📋 找到 {len(dl_list)} 個 dl 元素")
             
             if len(dl_list) <= 1:
-                print(f"    ⚠️ 沒有資料列 (只有標題列或無資料)")
+                print(f"    ⚠️ 沒有資料列")
                 return {'has_data': False, 'notices': [], 'processed': 0}
             
             notices = []
@@ -550,8 +543,7 @@ class TWMaritimePortBureauScraper:
                     dt_list = dl.find_all('dt')
                     dd = dl.find('dd')
                     
-                    if len(dt_list) < 2 or not dd:  # 至少要有編號和日期
-                        print(f"    ⚠️ 項目 {idx} 格式不符: dt={len(dt_list)}, dd={dd is not None}")
+                    if len(dt_list) < 2 or not dd:
                         continue
                     
                     processed_count += 1
@@ -572,17 +564,16 @@ class TWMaritimePortBureauScraper:
                         title = dd.get_text(strip=True)
                         link = ''
                     
-                    print(f"    [{idx}] {number} | {date} | {unit} | {title[:30]}...")
+                    print(f"    [{idx}] {date} | {title[:40]}...")
                     
                     # 檢查日期範圍
                     if not self.is_within_date_range(date):
                         skipped_date += 1
                         continue
                     
-                    # 檢查關鍵字(包含礙航和射擊)
+                    # 檢查關鍵字
                     matched_keywords = self.check_keywords(title)
                     if not matched_keywords:
-                        print(f"        ⏭️ 無關鍵字匹配")
                         skipped_keyword += 1
                         continue
                     
@@ -622,16 +613,15 @@ class TWMaritimePortBureauScraper:
                             'source': 'TW_MPB',
                             'category': category_name
                         })
-                        print(f"        💾 已存入資料庫 (ID: {w_id})")
+                        print(f"        💾 新資料已存入 (ID: {w_id})")
                     else:
                         print(f"        ℹ️ 資料已存在")
                     
                 except Exception as e:
                     print(f"    ⚠️ 處理項目 {idx} 時出錯: {e}")
-                    traceback.print_exc()
                     continue
             
-            print(f"    📊 統計: 處理 {processed_count} 筆, 符合條件 {len(notices)} 筆, 日期過濾 {skipped_date} 筆, 關鍵字過濾 {skipped_keyword} 筆")
+            print(f"    📊 統計: 處理 {processed_count} 筆, 符合 {len(notices)} 筆, 日期過濾 {skipped_date} 筆, 關鍵字過濾 {skipped_keyword} 筆")
             
             return {
                 'has_data': processed_count > 0,
@@ -640,7 +630,7 @@ class TWMaritimePortBureauScraper:
             }
             
         except Exception as e:
-            print(f"  ❌ 請求台灣航港局第 {page} 頁失敗: {e}")
+            print(f"  ❌ 請求失敗: {e}")
             traceback.print_exc()
             return {'has_data': False, 'notices': [], 'processed': 0}
     
@@ -648,7 +638,7 @@ class TWMaritimePortBureauScraper:
         """爬取所有頁面"""
         print(f"\n🇹🇼 開始爬取台灣航港局航行警告...")
         print(f"  🎯 目標分類: {', '.join(self.target_categories.values())}")
-        print(f"  🔑 關鍵字列表: {', '.join(self.keywords)}")
+        print(f"  🔑 關鍵字: {', '.join(self.keywords)}")
         
         # 爬取礙航公告和射擊公告
         for category_id, category_name in self.target_categories.items():
@@ -657,23 +647,19 @@ class TWMaritimePortBureauScraper:
             for page in range(1, max_pages + 1):
                 result = self.get_notices(page, category_id)
                 
-                # 如果這一頁沒有任何資料,停止爬取
                 if not result['has_data']:
-                    print(f"    🛑 第 {page} 頁沒有資料,停止爬取此分類")
+                    print(f"    🛑 第 {page} 頁沒有資料")
                     break
                 
-                # 如果處理的資料數量少於預期,可能已經到最後一頁
-                if result['processed'] < 15:  # 預設每頁15筆
-                    print(f"    ℹ️ 第 {page} 頁資料不足 ({result['processed']} 筆),可能是最後一頁")
-                    # 不要 break，繼續下一頁確認
+                if result['processed'] < 15:
+                    print(f"    ℹ️ 第 {page} 頁資料不足 ({result['processed']} 筆)")
                 
-                time.sleep(2)  # 避免請求過快
+                time.sleep(2)
         
         print(f"\n🇹🇼 台灣航港局爬取完成")
-        print(f"  📊 總計新增: {len(self.new_warnings)} 筆警告")
-        print(f"  📝 詳細資料: {len(self.captured_warnings_data)} 筆")
+        print(f"  📊 新增: {len(self.new_warnings)} 筆警告")
         
-        return self.new_warnings, self.captured_warnings_data
+        return self.new_warnings  # 只返回一個值!
 
 
 # ==================== 3. 修改後的中國海事局爬蟲 ====================
@@ -914,7 +900,6 @@ class CNMSANavigationWarningsScraper:
         return self.new_warnings
 
 
-# ==================== 4. 統一的多源監控系統 ====================
 class UnifiedMaritimeWarningSystem:
     def __init__(self, webhook_url=None, enable_teams=True, send_mode='batch', 
                  mail_user=None, mail_pass=None, target_email=None):
@@ -952,17 +937,21 @@ class UnifiedMaritimeWarningSystem:
         
         try:
             # 1. 執行中國海事局爬蟲
+            print("\n" + "="*60)
             cn_warnings = self.cn_scraper.scrape_all_bureaus()
             self.all_new_warnings.extend(cn_warnings)
             self.all_captured_data.extend(self.cn_scraper.captured_warnings_data)
+            print(f"🇨🇳 中國海事局: 抓取到 {len(self.cn_scraper.captured_warnings_data)} 筆資料")
             
-            # 2. 執行台灣航港局爬蟲  
-            tw_warnings = self.tw_scraper.scrape_all_pages()
+            # 2. 執行台灣航港局爬蟲
+            print("\n" + "="*60)
+            tw_warnings = self.tw_scraper.scrape_all_pages()  # 只接收一個返回值
             self.all_new_warnings.extend(tw_warnings)
             self.all_captured_data.extend(self.tw_scraper.captured_warnings_data)
+            print(f"🇹🇼 台灣航港局: 抓取到 {len(self.tw_scraper.captured_warnings_data)} 筆資料")
             
             # 3. 發送通知
-            if self.enable_teams and self.all_new_warnings:
+            if self.enable_teams and self.all_captured_data:  # 改用 captured_data 判斷
                 self.send_notifications()
             
             # 4. 生成報告
@@ -972,6 +961,10 @@ class UnifiedMaritimeWarningSystem:
         except Exception as e:
             print(f"❌ 執行過程發生錯誤: {e}")
             traceback.print_exc()
+            
+            # 發送錯誤通知
+            if self.email_notifier.enabled:
+                self.email_notifier.send_error_notification(str(e), traceback.format_exc())
     
     def send_notifications(self):
         """發送通知"""
@@ -1012,21 +1005,25 @@ class UnifiedMaritimeWarningSystem:
         print(f"📊 執行結果摘要")
         print(f"{'='*60}")
         print(f"⏱️ 總耗時: {duration:.2f} 秒")
-        print(f"🇨🇳 中國海事局新警告: {len([w for w in self.all_captured_data if w.get('source') == 'CN_MSA'])} 筆")
-        print(f"🇹🇼 台灣航港局新警告: {len([w for w in self.all_captured_data if w.get('source') == 'TW_MPB'])} 筆")
-        print(f"📈 總計新警告: {len(self.all_new_warnings)} 筆")
+        
+        cn_count = len([w for w in self.all_captured_data if w.get('source') == 'CN_MSA'])
+        tw_count = len([w for w in self.all_captured_data if w.get('source') == 'TW_MPB'])
+        
+        print(f"🇨🇳 中國海事局新警告: {cn_count} 筆")
+        print(f"🇹🇼 台灣航港局新警告: {tw_count} 筆")
+        print(f"📈 總計新警告: {len(self.all_captured_data)} 筆")
         print(f"{'='*60}")
         
-        if self.all_new_warnings:
-            # 生成並發送 Email 報告
-            json_data, html_data = self._generate_unified_report(duration)
-            self.email_notifier.send_trigger_email(json_data, html_data)
-            
+        # 無論有沒有新警告都發送報告
+        json_data, html_data = self._generate_unified_report(duration)
+        self.email_notifier.send_trigger_email(json_data, html_data)
+        
+        if self.all_captured_data:
             # 匯出 Excel
             self.db_manager.export_to_excel()
             print("✅ 報告生成完成")
         else:
-            print("ℹ️ 無新警告，跳過報告生成")
+            print("ℹ️ 本次無新警告")
     
     def _generate_unified_report(self, duration):
         """生成統一報告"""
@@ -1118,7 +1115,7 @@ class UnifiedMaritimeWarningSystem:
 # ==================== 5. 主程式進入點 ====================
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("🌊 多源海事警告監控系統")
+    print("🌊 航行警告監控系統(CN & TW)")
     print("="*60 + "\n")
     
     # 從環境變數讀取設定
