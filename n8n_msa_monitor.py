@@ -419,18 +419,26 @@ class TWMaritimePortBureauScraper:
             '333': '礙航公告',
             '334': '射擊公告'
         }
+        
+        print(f"  📅 台灣航港局爬蟲設定: 抓取最近 {days} 天資料 (從 {self.cutoff_date.strftime('%Y-%m-%d')} 起)")
     
     def check_keywords(self, text):
         """檢查文字中是否包含關鍵字"""
-        # 除了原有關鍵字,也要檢查是否包含「礙航」或「射擊」
-        matched = [k for k in self.keywords if k.lower() in text.lower()]
+        if not text:
+            return []
+        
+        matched = []
+        
+        # 檢查原有關鍵字
+        for k in self.keywords:
+            if k.lower() in text.lower():
+                matched.append(k)
         
         # 額外檢查礙航和射擊關鍵字
-        if '礙航' in text or '射擊' in text:
-            if '礙航' in text and '礙航' not in matched:
-                matched.append('礙航')
-            if '射擊' in text and '射擊' not in matched:
-                matched.append('射擊')
+        if '礙航' in text and '礙航' not in matched:
+            matched.append('礙航')
+        if '射擊' in text and '射擊' not in matched:
+            matched.append('射擊')
         
         return matched
     
@@ -439,7 +447,7 @@ class TWMaritimePortBureauScraper:
         try:
             date_string = date_string.strip()
             
-            # 處理民國年格式
+            # 處理民國年格式 (例如: 114-01-13 或 114/01/13)
             roc_match = re.match(r'^(\d{2,3})[/-](\d{1,2})[/-](\d{1,2})$', date_string)
             if roc_match:
                 year = int(roc_match.group(1)) + 1911
@@ -458,18 +466,25 @@ class TWMaritimePortBureauScraper:
                 except ValueError:
                     continue
             
+            print(f"    ⚠️ 無法解析日期: {date_string}")
             return None
-        except Exception:
+        except Exception as e:
+            print(f"    ⚠️ 日期解析錯誤: {e}")
             return None
     
     def is_within_date_range(self, date_string):
         """檢查日期是否在最近N天內"""
         if not date_string:
-            return True
+            return True  # 如果沒有日期,預設為符合條件
+        
         parsed_date = self.parse_date(date_string)
         if parsed_date:
-            return parsed_date >= self.cutoff_date
-        return True
+            is_valid = parsed_date >= self.cutoff_date
+            if not is_valid:
+                print(f"    ⏭️ 跳過舊資料: {date_string} (早於 {self.cutoff_date.strftime('%Y-%m-%d')})")
+            return is_valid
+        
+        return True  # 解析失敗時預設為符合條件
     
     def get_notices(self, page=1, base_category_id=None):
         """爬取指定頁面的航行警告"""
@@ -494,18 +509,26 @@ class TWMaritimePortBureauScraper:
             response.encoding = 'utf-8'
             
             soup = BeautifulSoup(response.text, 'html.parser')
-            notices = []
             
             contents_div = soup.find('div', class_='contents')
             if not contents_div:
-                return []
+                print(f"    ⚠️ 找不到 contents div")
+                return {'has_data': False, 'notices': [], 'processed': 0}
             
             dl_list = contents_div.find_all('dl')
+            print(f"    📋 找到 {len(dl_list)} 個 dl 元素")
+            
             if len(dl_list) <= 1:
-                return []
+                print(f"    ⚠️ 沒有資料列 (只有標題列)")
+                return {'has_data': False, 'notices': [], 'processed': 0}
+            
+            notices = []
+            processed_count = 0
+            skipped_date = 0
+            skipped_keyword = 0
             
             # 跳過第一個 dl(標題列)
-            for dl in dl_list[1:]:
+            for idx, dl in enumerate(dl_list[1:], 1):
                 try:
                     dt_list = dl.find_all('dt')
                     dd = dl.find('dd')
@@ -513,13 +536,11 @@ class TWMaritimePortBureauScraper:
                     if len(dt_list) < 3 or not dd:
                         continue
                     
+                    processed_count += 1
+                    
                     number = dt_list[0].get_text(strip=True)
                     date = dt_list[1].get_text(strip=True)
                     unit = dt_list[2].get_text(strip=True) if len(dt_list) > 2 else ''
-                    
-                    # 檢查日期範圍
-                    if not self.is_within_date_range(date):
-                        continue
                     
                     # 提取標題和連結
                     link_tag = dd.find('a')
@@ -532,10 +553,21 @@ class TWMaritimePortBureauScraper:
                         title = dd.get_text(strip=True)
                         link = ''
                     
+                    print(f"    [{idx}] {number} | {date} | {title[:30]}...")
+                    
+                    # 檢查日期範圍
+                    if not self.is_within_date_range(date):
+                        skipped_date += 1
+                        continue
+                    
                     # 檢查關鍵字(包含礙航和射擊)
                     matched_keywords = self.check_keywords(title)
                     if not matched_keywords:
+                        print(f"        ⏭️ 無關鍵字匹配")
+                        skipped_keyword += 1
                         continue
+                    
+                    print(f"        ✅ 關鍵字匹配: {', '.join(matched_keywords)}")
                     
                     notices.append({
                         'number': number,
@@ -571,44 +603,56 @@ class TWMaritimePortBureauScraper:
                             'source': 'TW_MPB',
                             'category': category_name
                         })
-                        print(f"    ✅ 新警告 [{category_name}]: {title[:40]}...")
+                        print(f"        💾 已存入資料庫 (ID: {w_id})")
+                    else:
+                        print(f"        ℹ️ 資料已存在")
                     
                 except Exception as e:
-                    print(f"    ⚠️ 處理項目時出錯: {e}")
+                    print(f"    ⚠️ 處理項目 {idx} 時出錯: {e}")
+                    traceback.print_exc()
                     continue
             
-            return notices
+            print(f"    📊 統計: 處理 {processed_count} 筆, 符合條件 {len(notices)} 筆, 日期過濾 {skipped_date} 筆, 關鍵字過濾 {skipped_keyword} 筆")
+            
+            return {
+                'has_data': processed_count > 0,
+                'notices': notices,
+                'processed': processed_count
+            }
             
         except Exception as e:
             print(f"  ❌ 請求台灣航港局第 {page} 頁失敗: {e}")
-            return []
+            traceback.print_exc()
+            return {'has_data': False, 'notices': [], 'processed': 0}
     
     def scrape_all_pages(self, max_pages=5):
         """爬取所有頁面"""
         print(f"\n🇹🇼 開始爬取台灣航港局航行警告...")
+        print(f"  🎯 目標分類: {', '.join(self.target_categories.values())}")
         
         # 爬取礙航公告和射擊公告
         for category_id, category_name in self.target_categories.items():
-            print(f"\n  📋 爬取分類: {category_name}")
+            print(f"\n  📋 爬取分類: {category_name} (ID: {category_id})")
             
             for page in range(1, max_pages + 1):
-                notices = self.get_notices(page, category_id)
+                result = self.get_notices(page, category_id)
                 
-                if not notices:
-                    print(f"    第 {page} 頁沒有符合條件的資料")
+                # 如果這一頁沒有任何資料,停止爬取
+                if not result['has_data']:
+                    print(f"    🛑 第 {page} 頁沒有資料,停止爬取此分類")
                     break
                 
-                # 檢查是否已超出日期範圍
-                dates = [self.parse_date(n.get('date', '')) for n in notices]
-                valid_dates = [d for d in dates if d is not None]
-                
-                if valid_dates and min(valid_dates) < self.cutoff_date:
-                    print(f"    已到達日期範圍外")
+                # 如果處理的資料數量少於預期,可能已經到最後一頁
+                if result['processed'] < 15:  # 預設每頁15筆
+                    print(f"    ℹ️ 第 {page} 頁資料不足 ({result['processed']} 筆),可能是最後一頁")
                     break
                 
                 time.sleep(2)  # 避免請求過快
         
-        print(f"\n🇹🇼 台灣航港局爬取完成,新增 {len(self.new_warnings)} 筆警告")
+        print(f"\n🇹🇼 台灣航港局爬取完成")
+        print(f"  📊 總計新增: {len(self.new_warnings)} 筆警告")
+        print(f"  📝 詳細資料: {len(self.captured_warnings_data)} 筆")
+        
         return self.new_warnings
 
 
