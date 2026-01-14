@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+統一海事警告監控系統 (中國海事局 + 台灣航港局)
+支援經緯度提取、地圖繪製、Teams 通知、Email 報告
+"""
+
 import platform
 import subprocess
 import os
@@ -13,6 +20,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -21,26 +29,333 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
-import pandas as pd
 import urllib3
 from database_manager import DatabaseManager
 from keyword_manager import KeywordManager
 
+# ==================== 地圖繪製相關套件 ====================
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Polygon
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    MAPPING_AVAILABLE = True
+    print("✅ 地圖繪製模組載入成功")
+except ImportError as e:
+    MAPPING_AVAILABLE = False
+    print(f"⚠️ 地圖繪製模組未安裝: {e}")
+
 # 停用警告
+os.environ['WDM_SSL_VERIFY'] = '0'
+load_dotenv()
 warnings.filterwarnings('ignore')
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.getLogger('selenium').setLevel(logging.ERROR)
 logging.getLogger('urllib3').setLevel(logging.ERROR)
 
-load_dotenv()
+# 錯誤過濾器 (Windows)
+if os.name == 'nt':
+    class ErrorFilter:
+        def __init__(self, stream):
+            self.stream = stream
+        def write(self, text):
+            if any(k in text for k in ['ERROR:net', 'handshake failed', 'DEPRECATED_ENDPOINT']): 
+                return
+            self.stream.write(text)
+        def flush(self): 
+            self.stream.flush()
+    sys.stderr = ErrorFilter(sys.stderr)
 
-# ==================== 1. 統一的通知系統 ====================
+
+# ==================== 1. 經緯度提取器 (增強版) ====================
+class CoordinateExtractor:
+    """提取文本中的經緯度座標 (支援多種格式)"""
+    
+    def __init__(self):
+        self.patterns = [
+            # 格式1: 18-17.37N 109-22.17E (度-分.小數)
+            r'(\d{1,3})-(\d{1,2}\.\d+)\s*([NSns北南])\s+(\d{1,3})-(\d{1,2}\.\d+)\s*([EWew東西])',
+            
+            # 格式2: 18-17N 109-22E (度-分)
+            r'(\d{1,3})-(\d{1,2})\s*([NSns北南])\s+(\d{1,3})-(\d{1,2})\s*([EWew東西])',
+            
+            # 格式3: 25°30'N 121°20'E
+            r'(\d{1,3})[°度]\s*(\d{1,2})[\'′分]?\s*([NSns北南])\s+(\d{1,3})[°度]\s*(\d{1,2})[\'′分]?\s*([EWew東西])',
+            
+            # 格式4: 25°30.5'N 121°20.8'E (含小數分)
+            r'(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?\s*([NSns北南])\s+(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?\s*([EWew東西])',
+            
+            # 格式5: N25°30' E121°20'
+            r'([NSns北南])\s*(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?\s+([EWew東西])\s*(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?',
+            
+            # 格式6: 25.5N 121.3E (十進制度)
+            r'(\d{1,3}\.\d+)\s*[°度]?\s*([NSns北南])\s+(\d{1,3}\.\d+)\s*[°度]?\s*([EWew東西])',
+            
+            # 格式7: 北緯25度30分 東經121度20分
+            r'[北南緯]\s*(\d{1,3})\s*度\s*(\d{1,2})\s*分\s+[東西經]\s*(\d{1,3})\s*度\s*(\d{1,2})\s*分',
+        ]
+    
+    def extract_coordinates(self, text):
+        """從文本中提取所有經緯度座標"""
+        coordinates = []
+        
+        if not text:
+            return coordinates
+        
+        # 預處理
+        text = text.replace('、', ' ').replace('，', ' ').replace('。', ' ')
+        
+        for pattern in self.patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                try:
+                    coord = self._parse_match(match, pattern)
+                    if coord and self._validate_coordinate(coord):
+                        coordinates.append(coord)
+                except Exception as e:
+                    continue
+        
+        # 去重
+        unique_coords = []
+        for coord in coordinates:
+            is_duplicate = False
+            for existing in unique_coords:
+                if abs(coord[0] - existing[0]) < 0.01 and abs(coord[1] - existing[1]) < 0.01:
+                    is_duplicate = True
+                    break
+            if not is_duplicate:
+                unique_coords.append(coord)
+        
+        return unique_coords
+    
+    def _parse_match(self, match, pattern):
+        """解析正則匹配結果為十進制座標"""
+        groups = match.groups()
+        
+        # 格式6: 十進制度數
+        if len(groups) == 4 and '\\.' in pattern and 'degree' not in pattern:
+            try:
+                lat = float(groups[0])
+                lat_dir = groups[1].upper()
+                lon = float(groups[2])
+                lon_dir = groups[3].upper()
+                
+                if lat_dir in ['S', 's', '南']:
+                    lat = -lat
+                if lon_dir in ['W', 'w', '西']:
+                    lon = -lon
+                
+                return (lat, lon)
+            except:
+                return None
+        
+        # 格式5: N25°30' E121°20'
+        if len(groups) >= 6 and groups[0] in ['N', 'S', 'n', 's', '北', '南']:
+            try:
+                lat_dir = groups[0].upper()
+                lat_deg = float(groups[1])
+                lat_min = float(groups[2])
+                lon_dir = groups[3].upper()
+                lon_deg = float(groups[4])
+                lon_min = float(groups[5])
+                
+                lat = lat_deg + lat_min / 60
+                lon = lon_deg + lon_min / 60
+                
+                if lat_dir in ['S', 's', '南']:
+                    lat = -lat
+                if lon_dir in ['W', 'w', '西']:
+                    lon = -lon
+                
+                return (lat, lon)
+            except:
+                return None
+        
+        # 其他格式: 度分格式
+        if len(groups) >= 6:
+            try:
+                lat_deg = float(groups[0])
+                lat_min = float(groups[1])
+                lat_dir = groups[2].upper() if len(groups[2]) > 0 else 'N'
+                lon_deg = float(groups[3])
+                lon_min = float(groups[4])
+                lon_dir = groups[5].upper() if len(groups[5]) > 0 else 'E'
+                
+                lat = lat_deg + lat_min / 60
+                lon = lon_deg + lon_min / 60
+                
+                if lat_dir in ['S', 's', '南']:
+                    lat = -lat
+                if lon_dir in ['W', 'w', '西']:
+                    lon = -lon
+                
+                return (lat, lon)
+            except:
+                return None
+        
+        return None
+    
+    def _validate_coordinate(self, coord):
+        """驗證座標是否合理"""
+        if not coord or len(coord) != 2:
+            return False
+        
+        lat, lon = coord
+        
+        # 基本範圍檢查
+        if lat < -90 or lat > 90:
+            return False
+        if lon < -180 or lon > 180:
+            return False
+        
+        # 亞太海域範圍 (放寬範圍以包含台灣)
+        # 緯度: 0°N - 60°N, 經度: 70°E - 180°E
+        if not (0 <= lat <= 60 and 70 <= lon <= 180):
+            return False
+        
+        return True
+
+
+# ==================== 2. 海圖繪製器 ====================
+class MaritimeMapPlotter:
+    """繪製海事警告區域地圖"""
+    
+    def __init__(self):
+        self.output_dir = "maps"
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+    
+    def plot_warnings(self, warnings_data, output_filename="maritime_warnings.png"):
+        """繪製多個警告的座標地圖"""
+        if not MAPPING_AVAILABLE:
+            print("❌ 地圖繪製功能不可用")
+            return None
+        
+        if not warnings_data:
+            print("⚠️ 無座標資料可繪製")
+            return None
+        
+        try:
+            # 收集所有座標
+            all_coords = []
+            for warning in warnings_data:
+                all_coords.extend(warning.get('coordinates', []))
+            
+            if not all_coords:
+                print("⚠️ 無有效座標可繪製")
+                return None
+            
+            # 計算地圖範圍
+            lats = [c[0] for c in all_coords]
+            lons = [c[1] for c in all_coords]
+            
+            lat_min, lat_max = min(lats) - 2, max(lats) + 2
+            lon_min, lon_max = min(lons) - 2, max(lons) + 2
+            
+            # 建立地圖
+            fig = plt.figure(figsize=(16, 12))
+            ax = plt.axes(projection=ccrs.PlateCarree())
+            
+            # 設定地圖範圍
+            ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+            
+            # 添加地圖特徵
+            ax.add_feature(cfeature.LAND, facecolor='lightgray', edgecolor='black', linewidth=0.5)
+            ax.add_feature(cfeature.OCEAN, facecolor='lightblue')
+            ax.add_feature(cfeature.COASTLINE, linewidth=0.8)
+            ax.add_feature(cfeature.BORDERS, linestyle=':', linewidth=0.5)
+            ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.5, linestyle='--')
+            
+            # 顏色列表 (區分來源)
+            cn_colors = ['red', 'darkred', 'crimson', 'orangered']
+            tw_colors = ['blue', 'darkblue', 'navy', 'royalblue']
+            
+            # 繪製每個警告的座標
+            cn_idx = 0
+            tw_idx = 0
+            
+            for warning in warnings_data:
+                coords = warning.get('coordinates', [])
+                if not coords:
+                    continue
+                
+                source = warning.get('source', 'CN_MSA')
+                bureau = warning.get('bureau', 'Unknown')
+                title = warning.get('title', '')[:30]
+                
+                # 根據來源選擇顏色
+                if source == 'TW_MPB':
+                    color = tw_colors[tw_idx % len(tw_colors)]
+                    marker = 's'  # 方形
+                    tw_idx += 1
+                    source_label = f"🇹🇼 {bureau}"
+                else:
+                    color = cn_colors[cn_idx % len(cn_colors)]
+                    marker = 'o'  # 圓形
+                    cn_idx += 1
+                    source_label = f"🇨🇳 {bureau}"
+                
+                # 繪製點
+                for idx, (lat, lon) in enumerate(coords):
+                    ax.plot(lon, lat, marker=marker, color=color, markersize=12, 
+                           transform=ccrs.PlateCarree(), 
+                           label=source_label if idx == 0 else "")
+                    
+                    # 添加座標標籤
+                    ax.text(lon + 0.15, lat + 0.15, f"({lat:.2f}, {lon:.2f})", 
+                           fontsize=9, transform=ccrs.PlateCarree(), 
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
+                
+                # 如果有多個點，繪製連線(表示區域)
+                if len(coords) > 1:
+                    lons_line = [c[1] for c in coords] + [coords[0][1]]
+                    lats_line = [c[0] for c in coords] + [coords[0][0]]
+                    ax.plot(lons_line, lats_line, color=color, linewidth=2, 
+                           linestyle='--', alpha=0.6, transform=ccrs.PlateCarree())
+                    
+                    # 填充區域
+                    polygon = Polygon([(c[1], c[0]) for c in coords], 
+                                    facecolor=color, alpha=0.2, 
+                                    transform=ccrs.PlateCarree())
+                    ax.add_patch(polygon)
+            
+            # 標題
+            plt.title(f"Maritime Navigation Warnings Map\n"
+                     f"({len(warnings_data)} warnings, {len(all_coords)} coordinates)\n"
+                     f"🇨🇳 China MSA | 🇹🇼 Taiwan MPB", 
+                     fontsize=18, fontweight='bold', pad=20)
+            
+            # 圖例
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                by_label = dict(zip(labels, handles))
+                ax.legend(by_label.values(), by_label.keys(), 
+                         loc='upper right', fontsize=10, framealpha=0.9)
+            
+            # 儲存圖片
+            output_path = os.path.join(self.output_dir, output_filename)
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            print(f"✅ 地圖已儲存: {output_path}")
+            return output_path
+        
+        except Exception as e:
+            print(f"❌ 地圖繪製失敗: {e}")
+            traceback.print_exc()
+            return None
+
+
+# ==================== 3. 統一 Teams 通知系統 ====================
 class UnifiedTeamsNotifier:
     def __init__(self, webhook_url):
         self.webhook_url = webhook_url
     
     def _fix_url(self, url, base_domain=""):
-        """修正 URL 格式，支援多個來源"""
+        """修正 URL 格式"""
         if not url: 
             return base_domain or "https://www.msa.gov.cn/page/outter/weather.jsp"
         url = url.strip()
@@ -81,102 +396,8 @@ class UnifiedTeamsNotifier:
             }]
         }
 
-    def send_unified_notification(self, warning_data, source_type="CN_MSA"):
-        """發送統一格式的警告通知"""
-        if not self.webhook_url: 
-            return False
-        
-        try:
-            warning_id, bureau, title, link, pub_time, keywords, scrape_time = warning_data
-            
-            # 根據來源設定不同的基礎域名和圖示
-            if source_type == "TW_MPB":
-                base_domain = "https://www.motcmpb.gov.tw"
-                source_icon = "🇹🇼"
-                source_name = "台灣航港局"
-                home_url = "https://www.motcmpb.gov.tw/Information/Notice?SiteId=1&NodeId=483"
-            else:  # CN_MSA
-                base_domain = "https://www.msa.gov.cn"
-                source_icon = "🇨🇳"
-                source_name = "中國海事局"
-                home_url = "https://www.msa.gov.cn/page/outter/weather.jsp"
-            
-            fixed_link = self._fix_url(link, base_domain)
-            
-            body = [
-                {
-                    "type": "TextBlock", 
-                    "text": f"{source_icon} 來源: {source_name}", 
-                    "size": "Medium", 
-                    "weight": "Bolder",
-                    "color": "Accent"
-                },
-                {
-                    "type": "TextBlock", 
-                    "text": "💡 點擊按鈕若失敗，請複製下方連結", 
-                    "size": "Small", 
-                    "isSubtle": True, 
-                    "wrap": True
-                },
-                {
-                    "type": "FactSet", 
-                    "facts": [
-                        {"title": "🏢 發布單位:", "value": bureau},
-                        {"title": "📋 標題:", "value": title},
-                        {"title": "📅 發布時間:", "value": pub_time},
-                        {"title": "🔍 關鍵字:", "value": keywords}
-                    ]
-                },
-                {
-                    "type": "TextBlock", 
-                    "text": "🔗 連結:", 
-                    "weight": "Bolder", 
-                    "size": "Small"
-                },
-                {
-                    "type": "TextBlock", 
-                    "text": fixed_link, 
-                    "wrap": True, 
-                    "size": "Small", 
-                    "fontType": "Monospace"
-                }
-            ]
-            
-            actions = [
-                {
-                    "type": "Action.OpenUrl", 
-                    "title": "🌐 開啟公告", 
-                    "url": fixed_link
-                },
-                {
-                    "type": "Action.OpenUrl", 
-                    "title": f"🏠 {source_name}首頁", 
-                    "url": home_url
-                }
-            ]
-            
-            payload = self._create_adaptive_card(f"🚨 {source_name} 航行警告通知", body, actions)
-            
-            response = requests.post(
-                self.webhook_url, 
-                json=payload, 
-                headers={"Content-Type": "application/json"}, 
-                timeout=30
-            )
-            
-            if response.status_code in [200, 202]:
-                print(f"  ✅ Teams 通知發送成功 (ID: {warning_id}, 來源: {source_type})")
-                return True
-            else:
-                print(f"  ❌ Teams 通知失敗: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Teams 通知發送失敗: {e}")
-            return False
-
     def send_batch_notification(self, warnings_list, source_type="CN_MSA"):
-        """發送批量警告通知"""
+        """發送批量警告通知 (含座標資訊) - 修正 SSL 錯誤"""
         if not self.webhook_url or not warnings_list: 
             return False
         
@@ -211,8 +432,18 @@ class UnifiedTeamsNotifier:
             
             # 顯示前 8 筆
             for idx, w in enumerate(warnings_list[:8], 1):
-                _, bureau, title, link, pub_time, _, _ = w
+                _, bureau, title, link, pub_time, _, _, coordinates = w
                 fixed_link = self._fix_url(link, base_domain)
+                
+                # 座標摘要
+                coord_summary = "無座標"
+                if coordinates:
+                    try:
+                        coord_list = json.loads(coordinates) if isinstance(coordinates, str) else coordinates
+                        if coord_list:
+                            coord_summary = f"📍 {len(coord_list)} 個座標點"
+                    except:
+                        coord_summary = "座標格式錯誤"
                 
                 body_elements.extend([
                     {
@@ -229,7 +460,7 @@ class UnifiedTeamsNotifier:
                     },
                     {
                         "type": "TextBlock", 
-                        "text": f"📅 {pub_time}", 
+                        "text": f"📅 {pub_time} | {coord_summary}", 
                         "size": "Small", 
                         "isSubtle": True
                     }
@@ -261,25 +492,42 @@ class UnifiedTeamsNotifier:
                 actions
             )
             
+            # ========== 關鍵修正：加入 verify=False 和 timeout ==========
+            print(f"  📤 正在發送 Teams 通知到: {self.webhook_url[:50]}...")
+            
             response = requests.post(
                 self.webhook_url, 
                 json=payload, 
                 headers={"Content-Type": "application/json"}, 
-                timeout=30
+                timeout=30,
+                verify=False  # ✅ 關閉 SSL 憑證驗證
             )
             
             if response.status_code in [200, 202]:
                 print(f"✅ {source_name} Teams 批量通知發送成功 ({len(warnings_list)} 筆)")
                 return True
             else:
-                print(f"❌ {source_name} Teams 批量通知失敗: {response.status_code}")
+                print(f"❌ {source_name} Teams 批量通知失敗: HTTP {response.status_code}")
+                print(f"   回應內容: {response.text[:200]}")
                 return False
                 
+        except requests.exceptions.SSLError as e:
+            print(f"❌ {source_name} Teams SSL 錯誤: {e}")
+            print(f"   💡 建議: 檢查網路代理設定或憑證")
+            return False
+        except requests.exceptions.Timeout as e:
+            print(f"❌ {source_name} Teams 連線逾時: {e}")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ {source_name} Teams 連線錯誤: {e}")
+            return False
         except Exception as e:
             print(f"❌ {source_name} Teams 批量發送失敗: {e}")
+            traceback.print_exc()
             return False
 
-# ==================== 1.5. Email 通知系統 ====================
+
+# ==================== 4. Email 通知系統 ====================
 class GmailRelayNotifier:
     """Gmail SMTP 郵件通知系統"""
     def __init__(self, mail_user, mail_pass, target_email):
@@ -289,45 +537,57 @@ class GmailRelayNotifier:
         self.smtp_server = "smtp.gmail.com"
         self.smtp_port = 587
         
-        # 檢查設定
         if not all([mail_user, mail_pass, target_email]):
-            print("⚠️ Email 通知未完整設定，將跳過郵件發送")
+            print("⚠️ Email 通知未完整設定")
             self.enabled = False
         else:
             self.enabled = True
             print("✅ Email 通知系統已啟用")
     
-    def send_trigger_email(self, json_data, html_content):
-        """發送觸發郵件"""
+    def send_trigger_email(self, json_data, html_content, map_path=None):
+        """發送觸發郵件 (含地圖附件)"""
         if not self.enabled:
-            print("ℹ️ Email 通知未啟用，跳過發送")
+            print("ℹ️ Email 通知未啟用")
             return False
         
         try:
-            # 建立郵件
-            msg = MIMEMultipart('alternative')
+            msg = MIMEMultipart('related')
             msg['Subject'] = f"🌊 海事警告監控報告 - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             msg['From'] = self.mail_user
             msg['To'] = self.target_email
             
-            # 純文字版本（備用）
-            text_content = f"""
-海事警告監控系統報告
-
-執行時間: {json_data.get('execution_time', 'N/A')}
-執行耗時: {json_data.get('duration', 0)} 秒
-總計新警告: {json_data.get('total_warnings', 0)} 筆
-- 中國海事局: {json_data.get('cn_msa_warnings', 0)} 筆
-- 台灣航港局: {json_data.get('tw_mpb_warnings', 0)} 筆
-
-詳細內容請查看 HTML 版本郵件。
-            """
+            # HTML 內容
+            msg_alternative = MIMEMultipart('alternative')
+            msg.attach(msg_alternative)
             
-            # 附加內容
-            part1 = MIMEText(text_content, 'plain', 'utf-8')
-            part2 = MIMEText(html_content, 'html', 'utf-8')
-            msg.attach(part1)
-            msg.attach(part2)
+            # 如果有地圖，在 HTML 中嵌入
+            if map_path and os.path.exists(map_path):
+                html_with_map = html_content.replace(
+                    '</body>',
+                    f'''
+                    <div style="text-align:center; margin:30px 0;">
+                        <h3 style="color:#003366;">🗺️ 警告區域地圖</h3>
+                        <img src="cid:map_image" style="max-width:100%; border:2px solid #ddd; border-radius:8px;">
+                    </div>
+                    </body>
+                    '''
+                )
+            else:
+                html_with_map = html_content
+            
+            msg_alternative.attach(MIMEText(html_with_map, 'html', 'utf-8'))
+            
+            # 附加地圖圖片
+            if map_path and os.path.exists(map_path):
+                try:
+                    with open(map_path, 'rb') as f:
+                        img = MIMEImage(f.read())
+                        img.add_header('Content-ID', '<map_image>')
+                        img.add_header('Content-Disposition', 'inline', filename='maritime_warnings_map.png')
+                        msg.attach(img)
+                    print("  ✅ 地圖已附加到 Email")
+                except Exception as e:
+                    print(f"  ⚠️ 無法附加地圖: {e}")
             
             # 發送郵件
             print(f"📧 正在發送郵件至 {self.target_email}...")
@@ -340,102 +600,82 @@ class GmailRelayNotifier:
             print(f"✅ 郵件發送成功")
             return True
             
-        except smtplib.SMTPAuthenticationError:
-            print("❌ Email 認證失敗，請檢查帳號密碼")
-            return False
-        except smtplib.SMTPException as e:
-            print(f"❌ SMTP 錯誤: {e}")
-            return False
         except Exception as e:
             print(f"❌ 郵件發送失敗: {e}")
             traceback.print_exc()
             return False
-    
-    def send_error_notification(self, error_message, error_traceback=None):
-        """發送錯誤通知郵件"""
-        if not self.enabled:
-            return False
-        
-        try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = f"⚠️ 海事警告監控系統錯誤 - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            msg['From'] = self.mail_user
-            msg['To'] = self.target_email
-            
-            html_content = f"""
-            <html><body style="font-family: Arial, sans-serif; color:#333;">
-                <div style="background:#dc3545; color:white; padding:20px; border-radius:6px 6px 0 0;">
-                    <h2 style="margin: 0;">⚠️ 系統錯誤通知</h2>
-                </div>
-                <div style="padding:20px; border:1px solid #ddd;">
-                    <p><strong>錯誤時間:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                    <p><strong>錯誤訊息:</strong></p>
-                    <pre style="background:#f8f9fa; padding:15px; border-radius:4px; overflow-x:auto;">{error_message}</pre>
-                    {f'<p><strong>詳細追蹤:</strong></p><pre style="background:#f8f9fa; padding:15px; border-radius:4px; overflow-x:auto; font-size:12px;">{error_traceback}</pre>' if error_traceback else ''}
-                </div>
-            </body></html>
-            """
-            
-            part = MIMEText(html_content, 'html', 'utf-8')
-            msg.attach(part)
-            
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
-                server.starttls()
-                server.login(self.mail_user, self.mail_pass)
-                server.send_message(msg)
-            
-            print("✅ 錯誤通知郵件發送成功")
-            return True
-            
-        except Exception as e:
-            print(f"❌ 錯誤通知郵件發送失敗: {e}")
-            return False
-# ==================== 2. 台灣航港局爬蟲類別 ====================
-# ==================== 2. 台灣航港局爬蟲類別 ====================
+
+
+# ==================== 5. 台灣航港局爬蟲 (使用 Selenium，含座標提取) ====================
+# ==================== 5. 台灣航港局爬蟲 (Selenium 版本，修正動態載入) ====================
 class TWMaritimePortBureauScraper:
-    def __init__(self, db_manager, keyword_manager, teams_notifier, days=3):
+    def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor, days=3):
         self.db_manager = db_manager
         self.keyword_manager = keyword_manager
         self.keywords = keyword_manager.get_keywords()
         self.teams_notifier = teams_notifier
+        self.coord_extractor = coord_extractor
         
-        self.base_url = "https://www.motcmpb.gov.tw/Information/Notice"
-        self.params = {
-            'SiteId': '1',
-            'NodeId': '483'
-        }
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Referer': 'https://www.motcmpb.gov.tw/'
-        }
+        self.base_url = "https://www.motcmpb.gov.tw/Information/Notice?SiteId=1&NodeId=483"
+        
         self.days = days
         self.cutoff_date = datetime.now() - timedelta(days=days)
         self.new_warnings = []
         self.captured_warnings_data = []
         
-        # 定義要抓取的分類 (礙航公告和射擊公告)
+        # 定義要抓取的分類
         self.target_categories = {
             '333': '礙航公告',
             '334': '射擊公告'
         }
         
-        print(f"  📅 台灣航港局爬蟲設定: 抓取最近 {days} 天資料 (從 {self.cutoff_date.strftime('%Y-%m-%d')} 起)")
+        print(f"  📅 台灣航港局爬蟲設定: 抓取最近 {days} 天資料")
+        
+        # ========== 初始化 Selenium WebDriver ==========
+        print("  🌐 正在啟動 Chrome WebDriver (台灣航港局)...")
+        
+        options = webdriver.ChromeOptions()
+        options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # 允許載入圖片以確保完整渲染
+        prefs = {
+            'profile.default_content_setting_values.notifications': 2,
+        }
+        options.add_experimental_option('prefs', prefs)
+        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        try:
+            service = Service(ChromeDriverManager().install())
+            if platform.system() == 'Windows':
+                service.creation_flags = subprocess.CREATE_NO_WINDOW
+            
+            self.driver = webdriver.Chrome(service=service, options=options)
+            self.driver.set_page_load_timeout(60)
+            self.wait = WebDriverWait(self.driver, 20)
+            print("  ✅ WebDriver 啟動成功 (台灣航港局)")
+            
+        except Exception as e:
+            print(f"  ❌ WebDriver 啟動失敗: {e}")
+            raise
     
     def check_keywords(self, text):
-        """檢查文字中是否包含關鍵字"""
+        """檢查關鍵字"""
         if not text:
             return []
         
         matched = []
-        
-        # 檢查原有關鍵字
         for k in self.keywords:
             if k.lower() in text.lower():
                 matched.append(k)
         
-        # 額外檢查礙航和射擊關鍵字
+        # 額外檢查礙航和射擊
         if '礙航' in text and '礙航' not in matched:
             matched.append('礙航')
         if '射擊' in text and '射擊' not in matched:
@@ -444,37 +684,29 @@ class TWMaritimePortBureauScraper:
         return matched
     
     def parse_date(self, date_string):
-        """解析日期字串(支援民國年和西元年)"""
+        """解析日期 (支援民國年)"""
         try:
             date_string = date_string.strip()
             
-            # 處理民國年格式 (例如: 114-01-13 或 114/01/13)
-            roc_match = re.match(r'^(\d{2,3})[/-](\d{1,2})[/-](\d{1,2})$', date_string)
-            if roc_match:
-                year = int(roc_match.group(1)) + 1911
-                month = int(roc_match.group(2))
-                day = int(roc_match.group(3))
+            # 處理民國年格式 (例如: 114-01-13 或 2026-01-13)
+            date_match = re.match(r'^(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})$', date_string)
+            if date_match:
+                year = int(date_match.group(1))
+                month = int(date_match.group(2))
+                day = int(date_match.group(3))
+                
+                # 判斷是民國年還是西元年
+                if year < 1000:  # 民國年
+                    year += 1911
+                
                 return datetime(year, month, day)
             
-            # 處理西元年格式
-            date_formats = [
-                '%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%Y年%m月%d日'
-            ]
-            
-            for fmt in date_formats:
-                try:
-                    return datetime.strptime(date_string, fmt)
-                except ValueError:
-                    continue
-            
-            print(f"    ⚠️ 無法解析日期: {date_string}")
             return None
         except Exception as e:
-            print(f"    ⚠️ 日期解析錯誤: {e}")
             return None
     
     def is_within_date_range(self, date_string):
-        """檢查日期是否在最近N天內"""
+        """檢查日期範圍"""
         if not date_string:
             return True
         
@@ -482,41 +714,126 @@ class TWMaritimePortBureauScraper:
         if parsed_date:
             is_valid = parsed_date >= self.cutoff_date
             if not is_valid:
-                print(f"    ⏭️ 跳過舊資料: {date_string} (早於 {self.cutoff_date.strftime('%Y-%m-%d')})")
+                print(f"          ⏭️ 日期過舊: {date_string}")
             return is_valid
         
         return True
     
-    def get_notices(self, page=1, base_category_id=None):
-        """爬取指定頁面的航行警告"""
+    def click_category_tab(self, category_id):
+        """點擊分類標籤"""
         try:
-            params = self.params.copy()
-            if page > 1:
-                params['page'] = page
-            if base_category_id:
-                params['baseCategoryId'] = base_category_id
+            # 等待標籤載入
+            self.wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.tabs a"))
+            )
             
+            # 找到對應的標籤
+            if category_id:
+                # 使用 data-val 屬性找到標籤
+                tab_xpath = f"//div[@class='tabs']//a[@data-val='{category_id}']"
+                tab = self.wait.until(
+                    EC.element_to_be_clickable((By.XPATH, tab_xpath))
+                )
+            else:
+                # 點擊「全部」標籤
+                tab_xpath = "//div[@class='tabs']//a[@class='active']"
+                tab = self.driver.find_element(By.XPATH, tab_xpath)
+            
+            # 滾動到元素位置
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", tab)
+            time.sleep(0.5)
+            
+            # 點擊標籤
+            self.driver.execute_script("arguments[0].click();", tab)
+            print(f"    ✅ 已點擊分類標籤")
+            
+            # 等待內容更新
+            time.sleep(3)
+            
+            return True
+            
+        except Exception as e:
+            print(f"    ⚠️ 點擊分類標籤失敗: {e}")
+            return False
+    
+    def get_notices_selenium(self, page=1, base_category_id=None):
+        """使用 Selenium 爬取指定頁面"""
+        try:
             category_name = self.target_categories.get(base_category_id, '全部') if base_category_id else '全部'
             print(f"  正在請求台灣航港局 [{category_name}] 第 {page} 頁...")
             
-            response = requests.get(
-                self.base_url, 
-                params=params, 
-                headers=self.headers,
-                timeout=30,
-                verify=False
-            )
-            response.raise_for_status()
-            response.encoding = 'utf-8'
+            # 第一次載入或切換分類
+            if page == 1:
+                # 載入主頁面
+                print(f"    🌐 載入主頁面...")
+                self.driver.get(self.base_url)
+                time.sleep(3)
+                
+                # 點擊分類標籤
+                if base_category_id:
+                    if not self.click_category_tab(base_category_id):
+                        return {'has_data': False, 'notices': [], 'processed': 0}
+            else:
+                # 翻頁
+                try:
+                    # 找到「下一頁」按鈕
+                    next_button = self.wait.until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "li.next a"))
+                    )
+                    
+                    # 滾動到按鈕位置
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                    time.sleep(0.5)
+                    
+                    # 點擊下一頁
+                    self.driver.execute_script("arguments[0].click();", next_button)
+                    print(f"    ✅ 已點擊下一頁")
+                    
+                    time.sleep(3)
+                    
+                except Exception as e:
+                    print(f"    ⚠️ 無法翻頁: {e}")
+                    return {'has_data': False, 'notices': [], 'processed': 0}
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # 等待內容載入
+            try:
+                # 等待 table div 出現
+                self.wait.until(
+                    EC.presence_of_element_located((By.ID, "table"))
+                )
+                
+                # 等待 dl 元素出現
+                self.wait.until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "#table dl"))
+                )
+                
+                print(f"    ✅ 頁面內容載入完成")
+                
+            except Exception as e:
+                print(f"    ⚠️ 等待內容載入超時: {e}")
+                
+                # Debug: 截圖
+                try:
+                    screenshot_path = f"tw_mpb_debug_{category_name}_p{page}.png"
+                    self.driver.save_screenshot(screenshot_path)
+                    print(f"    📸 已儲存截圖: {screenshot_path}")
+                except:
+                    pass
+                
+                return {'has_data': False, 'notices': [], 'processed': 0}
             
-            # 尋找 contents div (可能有多個 class)
-            contents_div = soup.find('div', class_='contents')
-            if not contents_div:
-                contents_div = soup.select_one('#table > div.contents')
-            if not contents_div:
-                contents_div = soup.select_one('div.contents.contents2')
+            # 使用 BeautifulSoup 解析
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            
+            # 找到 table div
+            table_div = soup.find('div', id='table')
+            
+            if not table_div:
+                print(f"    ⚠️ 找不到 table div")
+                return {'has_data': False, 'notices': [], 'processed': 0}
+            
+            # 找到 contents div
+            contents_div = table_div.find('div', class_='contents')
             
             if not contents_div:
                 print(f"    ⚠️ 找不到 contents div")
@@ -524,26 +841,31 @@ class TWMaritimePortBureauScraper:
             
             print(f"    ✅ 找到 contents div")
             
-            # 尋找所有 dl 元素
-            dl_list = contents_div.find_all('dl')
-            print(f"    📋 找到 {len(dl_list)} 個 dl 元素")
+            # 找到所有 dl 元素
+            all_dl_list = contents_div.find_all('dl')
             
-            if len(dl_list) <= 1:
-                print(f"    ⚠️ 沒有資料列")
+            # 過濾掉標題列 (class="con-title")
+            data_dl_list = []
+            for dl in all_dl_list:
+                dl_classes = dl.get('class', [])
+                if 'con-title' not in dl_classes:
+                    data_dl_list.append(dl)
+            
+            print(f"    📋 找到 {len(data_dl_list)} 個資料列")
+            
+            if len(data_dl_list) == 0:
                 return {'has_data': False, 'notices': [], 'processed': 0}
             
-            notices = []
             processed_count = 0
-            skipped_date = 0
-            skipped_keyword = 0
             
-            # 跳過第一個 dl(標題列)
-            for idx, dl in enumerate(dl_list[1:], 1):
+            # 遍歷每個 dl
+            for idx, dl in enumerate(data_dl_list, 1):
                 try:
                     dt_list = dl.find_all('dt')
                     dd = dl.find('dd')
                     
                     if len(dt_list) < 2 or not dd:
+                        print(f"    ⚠️ 第 {idx} 列結構不完整")
                         continue
                     
                     processed_count += 1
@@ -551,52 +873,109 @@ class TWMaritimePortBureauScraper:
                     # 提取資料
                     number = dt_list[0].get_text(strip=True)
                     date = dt_list[1].get_text(strip=True)
-                    unit = dt_list[2].get_text(strip=True) if len(dt_list) > 2 else ''
+                    unit = dt_list[2].get_text(strip=True) if len(dt_list) > 2 else '台灣航港局'
                     
-                    # 提取標題和連結
                     link_tag = dd.find('a')
                     if link_tag:
                         title = link_tag.get_text(strip=True)
                         link = link_tag.get('href', '')
+                        
+                        # 修正相對路徑
                         if link and not link.startswith('http'):
-                            link = f"https://www.motcmpb.gov.tw{link}"
+                            if link.startswith('/'):
+                                link = f"https://www.motcmpb.gov.tw{link}"
+                            else:
+                                link = f"https://www.motcmpb.gov.tw/{link}"
                     else:
                         title = dd.get_text(strip=True)
                         link = ''
                     
-                    print(f"    [{idx}] {date} | {title[:40]}...")
+                    print(f"    [{idx}] {number} | {date} | {title[:40]}...")
                     
                     # 檢查日期範圍
                     if not self.is_within_date_range(date):
-                        skipped_date += 1
                         continue
                     
                     # 檢查關鍵字
                     matched_keywords = self.check_keywords(title)
                     if not matched_keywords:
-                        skipped_keyword += 1
+                        print(f"        ⏭️ 無關鍵字匹配")
                         continue
                     
                     print(f"        ✅ 關鍵字匹配: {', '.join(matched_keywords)}")
                     
-                    notices.append({
-                        'number': number,
-                        'date': date,
-                        'title': title,
-                        'unit': unit,
-                        'link': link,
-                        'keywords': matched_keywords,
-                        'category': category_name
-                    })
+                    # ========== 提取座標 ==========
+                    print(f"        📍 正在提取座標...")
+                    coordinates = []
+                    
+                    # 1. 從標題提取
+                    title_coords = self.coord_extractor.extract_coordinates(title)
+                    if title_coords:
+                        coordinates.extend(title_coords)
+                        print(f"          ✅ 從標題提取到 {len(title_coords)} 個座標")
+                    
+                    # 2. 從連結頁面提取
+                    if link:
+                        try:
+                            print(f"          🌐 正在訪問詳細頁面...")
+                            
+                            # 開新分頁訪問詳細頁面
+                            self.driver.execute_script("window.open('');")
+                            self.driver.switch_to.window(self.driver.window_handles[1])
+                            
+                            self.driver.get(link)
+                            time.sleep(2)
+                            
+                            detail_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+                            
+                            # 嘗試多種方式找到內容區域
+                            content_div = (
+                                detail_soup.find('div', class_='editor_Content') or
+                                detail_soup.find('div', class_='content') or
+                                detail_soup.find('div', id='content') or
+                                detail_soup.find('article') or
+                                detail_soup.find('div', id='container')
+                            )
+                            
+                            if content_div:
+                                page_text = content_div.get_text()
+                                page_coords = self.coord_extractor.extract_coordinates(page_text)
+                                
+                                if page_coords:
+                                    for pc in page_coords:
+                                        if pc not in coordinates:
+                                            coordinates.append(pc)
+                                    print(f"          ✅ 從頁面提取到 {len(page_coords)} 個座標")
+                            
+                            # 關閉分頁，返回列表頁
+                            self.driver.close()
+                            self.driver.switch_to.window(self.driver.window_handles[0])
+                            time.sleep(1)
+                            
+                        except Exception as e:
+                            print(f"          ⚠️ 無法從網頁提取座標: {e}")
+                            # 確保返回列表頁
+                            try:
+                                if len(self.driver.window_handles) > 1:
+                                    self.driver.close()
+                                    self.driver.switch_to.window(self.driver.window_handles[0])
+                            except:
+                                pass
+                    
+                    if coordinates:
+                        print(f"        📍 總共提取到 {len(coordinates)} 個座標")
+                    else:
+                        print(f"        ℹ️ 未找到座標資訊")
                     
                     # 存入資料庫
                     db_data = (
-                        unit or "台灣航港局",
+                        unit,
                         title,
                         link,
                         date,
                         ', '.join(matched_keywords),
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        coordinates
                     )
                     
                     is_new, w_id = self.db_manager.save_warning(db_data, source_type="TW_MPB")
@@ -605,13 +984,14 @@ class TWMaritimePortBureauScraper:
                         self.new_warnings.append(w_id)
                         self.captured_warnings_data.append({
                             'id': w_id,
-                            'bureau': unit or "台灣航港局",
+                            'bureau': unit,
                             'title': title,
                             'link': link,
                             'time': date,
                             'keywords': matched_keywords,
                             'source': 'TW_MPB',
-                            'category': category_name
+                            'category': category_name,
+                            'coordinates': coordinates
                         })
                         print(f"        💾 新資料已存入 (ID: {w_id})")
                     else:
@@ -619,13 +999,14 @@ class TWMaritimePortBureauScraper:
                     
                 except Exception as e:
                     print(f"    ⚠️ 處理項目 {idx} 時出錯: {e}")
+                    traceback.print_exc()
                     continue
             
-            print(f"    📊 統計: 處理 {processed_count} 筆, 符合 {len(notices)} 筆, 日期過濾 {skipped_date} 筆, 關鍵字過濾 {skipped_keyword} 筆")
+            print(f"    📊 處理 {processed_count} 筆")
             
             return {
                 'has_data': processed_count > 0,
-                'notices': notices,
+                'notices': [],
                 'processed': processed_count
             }
             
@@ -634,41 +1015,50 @@ class TWMaritimePortBureauScraper:
             traceback.print_exc()
             return {'has_data': False, 'notices': [], 'processed': 0}
     
-    def scrape_all_pages(self, max_pages=5):
+    def scrape_all_pages(self, max_pages=3):
         """爬取所有頁面"""
         print(f"\n🇹🇼 開始爬取台灣航港局航行警告...")
-        print(f"  🎯 目標分類: {', '.join(self.target_categories.values())}")
-        print(f"  🔑 關鍵字: {', '.join(self.keywords)}")
+        print(f"  🌐 目標網址: {self.base_url}")
         
-        # 爬取礙航公告和射擊公告
-        for category_id, category_name in self.target_categories.items():
-            print(f"\n  📋 爬取分類: {category_name} (ID: {category_id})")
+        try:
+            for category_id, category_name in self.target_categories.items():
+                print(f"\n  📋 爬取分類: {category_name} (ID: {category_id})")
+                
+                for page in range(1, max_pages + 1):
+                    result = self.get_notices_selenium(page, category_id)
+                    
+                    if not result['has_data']:
+                        print(f"    🛑 第 {page} 頁沒有資料，停止")
+                        break
+                    
+                    if result['processed'] < 10:
+                        print(f"    ℹ️ 第 {page} 頁資料較少，可能已接近最後一頁")
+                    
+                    time.sleep(2)
             
-            for page in range(1, max_pages + 1):
-                result = self.get_notices(page, category_id)
-                
-                if not result['has_data']:
-                    print(f"    🛑 第 {page} 頁沒有資料")
-                    break
-                
-                if result['processed'] < 15:
-                    print(f"    ℹ️ 第 {page} 頁資料不足 ({result['processed']} 筆)")
-                
-                time.sleep(2)
+        except Exception as e:
+            print(f"❌ 台灣航港局爬取過程發生錯誤: {e}")
+            traceback.print_exc()
+        finally:
+            # 關閉 WebDriver
+            try:
+                self.driver.quit()
+                print("  🔒 WebDriver 已關閉 (台灣航港局)")
+            except:
+                pass
         
-        print(f"\n🇹🇼 台灣航港局爬取完成")
-        print(f"  📊 新增: {len(self.new_warnings)} 筆警告")
-        
-        return self.new_warnings  # 只返回一個值!
+        print(f"\n🇹🇼 台灣航港局爬取完成，新增 {len(self.new_warnings)} 筆警告")
+        return self.new_warnings
 
 
-# ==================== 3. 修改後的中國海事局爬蟲 ====================
+# ==================== 6. 中國海事局爬蟲 (含座標提取) ====================
 class CNMSANavigationWarningsScraper:
-    def __init__(self, db_manager, keyword_manager, teams_notifier, headless=True):
+    def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor, headless=True):
         self.db_manager = db_manager
         self.keyword_manager = keyword_manager
         self.keywords = keyword_manager.get_keywords()
         self.teams_notifier = teams_notifier
+        self.coord_extractor = coord_extractor
         
         print("🇨🇳 初始化中國海事局爬蟲...")
         
@@ -680,75 +1070,15 @@ class CNMSANavigationWarningsScraper:
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
-        options.add_argument('--disable-extensions')
-        options.add_argument('--disable-logging')
-        options.add_argument('--log-level=3')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         
-        prefs = {
-            'profile.managed_default_content_settings.images': 2,
-            'profile.default_content_setting_values.notifications': 2,
-        }
+        prefs = {'profile.managed_default_content_settings.images': 2}
         options.add_experimental_option('prefs', prefs)
-        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        options.add_experimental_option('excludeSwitches', ['enable-logging'])
         
         try:
-            # 優先使用環境變數指定的路徑
-            manual_path = os.getenv('CHROMEDRIVER_PATH', '')
-            
-            if manual_path and os.path.exists(manual_path):
-                print(f"  ✅ 使用手動指定的 ChromeDriver: {manual_path}")
-                service = Service(manual_path)
-            else:
-                # 方法 1: 使用 webdriver_manager 並禁用 SSL 驗證
-                import ssl
-                from webdriver_manager.chrome import ChromeDriverManager
-                
-                # 臨時禁用 SSL 驗證
-                os.environ['WDM_SSL_VERIFY'] = '0'
-                
-                try:
-                    service = Service(ChromeDriverManager().install())
-                    print("  ✅ 使用 webdriver_manager 下載的 ChromeDriver")
-                except Exception as e:
-                    print(f"  ⚠️ webdriver_manager 失敗: {e}")
-                    print("  🔄 嘗試使用系統已安裝的 ChromeDriver...")
-                    
-                    # 方法 2: 使用系統路徑中的 chromedriver
-                    try:
-                        service = Service()
-                        print("  ✅ 使用系統路徑的 ChromeDriver")
-                    except Exception as e2:
-                        print(f"  ⚠️ 系統 ChromeDriver 也失敗: {e2}")
-                        print("  🔄 嘗試手動指定 ChromeDriver 路徑...")
-                        
-                        # 方法 3: 手動指定路徑
-                        possible_paths = [
-                            r"C:\chromedriver\chromedriver.exe",
-                            r"C:\Program Files\chromedriver\chromedriver.exe",
-                            r".\chromedriver.exe",
-                            "./chromedriver.exe",
-                            os.path.join(os.getcwd(), "chromedriver.exe")
-                        ]
-                        
-                        chromedriver_path = None
-                        for path in possible_paths:
-                            if os.path.exists(path):
-                                chromedriver_path = path
-                                break
-                        
-                        if chromedriver_path:
-                            service = Service(chromedriver_path)
-                            print(f"  ✅ 使用 ChromeDriver: {chromedriver_path}")
-                        else:
-                            raise Exception(
-                                "無法找到 ChromeDriver。請執行以下步驟：\n"
-                                "1. 下載 ChromeDriver: https://chromedriver.chromium.org/downloads\n"
-                                "2. 將 chromedriver.exe 放到專案目錄\n"
-                                "3. 或設定環境變數 CHROMEDRIVER_PATH"
-                            )
-            
+            service = Service(ChromeDriverManager().install())
             if platform.system() == 'Windows':
                 service.creation_flags = subprocess.CREATE_NO_WINDOW
             
@@ -766,12 +1096,10 @@ class CNMSANavigationWarningsScraper:
         self.captured_warnings_data = []
     
     def check_keywords(self, text):
-        """檢查關鍵字"""
         return [k for k in self.keywords if k.lower() in text.lower()]
     
     def parse_date(self, date_str):
-        """解析日期"""
-        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y年%m月%d日', '%Y-%m-%d %H:%M:%S']:
+        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y年%m月%d日']:
             try: 
                 return datetime.strptime(date_str.strip(), fmt)
             except: 
@@ -779,69 +1107,141 @@ class CNMSANavigationWarningsScraper:
         return None
     
     def scrape_bureau_warnings(self, bureau_name, bureau_element):
-        """抓取單一海事局警告"""
+        """抓取單一海事局警告 (含座標提取)"""
         print(f"  🔍 抓取: {bureau_name}")
         try:
             self.driver.execute_script("arguments[0].scrollIntoView(true); arguments[0].click();", bureau_element)
             time.sleep(2)
             
             self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "right_main")))
-            items = self.driver.find_elements(By.CSS_SELECTOR, ".right_main a")
             
-            for item in items:
+            processed_count = 0
+            max_items = 100
+            
+            while processed_count < max_items:
                 try:
-                    title = item.get_attribute('title') or item.text.strip()
-                    title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title)
-                    if not title: 
-                        continue
-
-                    matched = self.check_keywords(title)
-                    if not matched: 
-                        continue
-
-                    link = item.get_attribute('href') or ''
-                    if link.startswith('/'): 
-                        link = f"https://www.msa.gov.cn{link}"
+                    items = self.driver.find_elements(By.CSS_SELECTOR, ".right_main a")
                     
-                    try: 
-                        publish_time = item.find_element(By.CSS_SELECTOR, ".time").text.strip()
-                    except: 
-                        match = re.search(r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}', item.text)
-                        publish_time = match.group() if match else ""
-
-                    if publish_time:
-                        p_date = self.parse_date(publish_time)
-                        if p_date and p_date < self.three_days_ago: 
+                    if processed_count >= len(items):
+                        break
+                    
+                    item = items[processed_count]
+                    
+                    try:
+                        title = item.get_attribute('title') or item.text.strip()
+                        title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title)
+                        if not title:
+                            processed_count += 1
                             continue
 
-                    # 存入資料庫
-                    db_data = (
-                        bureau_name, 
-                        title, 
-                        link, 
-                        publish_time, 
-                        ', '.join(matched), 
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    )
-                    is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
-                    
-                    if is_new and w_id:
-                        self.new_warnings.append(w_id)
-                        self.captured_warnings_data.append({
-                            'id': w_id, 
-                            'bureau': bureau_name, 
-                            'title': title, 
-                            'link': link, 
-                            'time': publish_time, 
-                            'keywords': matched,
-                            'source': 'CN_MSA'
-                        })
-                        print(f"    ✅ 新警告: {title[:40]}...")
+                        matched = self.check_keywords(title)
+                        if not matched:
+                            processed_count += 1
+                            continue
+
+                        link = item.get_attribute('href') or ''
+                        if link.startswith('/'):
+                            link = f"https://www.msa.gov.cn{link}"
                         
-                except Exception as e:
-                    print(f"    ⚠️ 處理項目時出錯: {e}")
-                    continue
+                        try:
+                            publish_time = item.find_element(By.CSS_SELECTOR, ".time").text.strip()
+                        except:
+                            match = re.search(r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}', item.text)
+                            publish_time = match.group() if match else ""
+
+                        if publish_time:
+                            p_date = self.parse_date(publish_time)
+                            if p_date and p_date < self.three_days_ago:
+                                processed_count += 1
+                                continue
+                        
+                        # ========== 提取座標 ==========
+                        print(f"    📍 正在提取座標: {title[:40]}...")
+                        coordinates = []
+                        
+                        # 從標題提取
+                        title_coords = self.coord_extractor.extract_coordinates(title)
+                        if title_coords:
+                            coordinates.extend(title_coords)
+                            print(f"      ✅ 從標題提取到 {len(title_coords)} 個座標")
+                        
+                        # 從連結頁面提取
+                        if link and not link.startswith('javascript'):
+                            try:
+                                self.driver.execute_script("arguments[0].scrollIntoView(true);", item)
+                                time.sleep(0.5)
+                                self.driver.execute_script("arguments[0].click();", item)
+                                time.sleep(2)
+                                
+                                try:
+                                    page_text = self.driver.find_element(By.TAG_NAME, 'body').text
+                                    page_coords = self.coord_extractor.extract_coordinates(page_text)
+                                    
+                                    if page_coords:
+                                        for pc in page_coords:
+                                            if pc not in coordinates:
+                                                coordinates.append(pc)
+                                        print(f"      ✅ 從頁面提取到 {len(page_coords)} 個座標")
+                                except Exception as e:
+                                    print(f"      ⚠️ 頁面內容提取失敗: {e}")
+                                
+                                self.driver.back()
+                                time.sleep(2)
+                                self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "right_main")))
+                                
+                            except Exception as e:
+                                print(f"      ⚠️ 無法從網頁提取座標: {e}")
+                                try:
+                                    self.driver.back()
+                                    time.sleep(2)
+                                except:
+                                    pass
+                        
+                        if coordinates:
+                            print(f"      📍 總共提取到 {len(coordinates)} 個座標")
+                        else:
+                            print(f"      ⚠️ 未找到座標資訊")
+                        
+                        # 存入資料庫
+                        db_data = (
+                            bureau_name,
+                            title,
+                            link,
+                            publish_time,
+                            ', '.join(matched),
+                            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            coordinates
+                        )
+                        
+                        is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
+                        
+                        if is_new and w_id:
+                            self.new_warnings.append(w_id)
+                            self.captured_warnings_data.append({
+                                'id': w_id,
+                                'bureau': bureau_name,
+                                'title': title,
+                                'link': link,
+                                'time': publish_time,
+                                'keywords': matched,
+                                'source': 'CN_MSA',
+                                'coordinates': coordinates
+                            })
+                            print(f"      ✅ 新警告: {title[:40]}...")
+                        else:
+                            print(f"      ⏭️ 已存在")
                     
+                    except Exception as e:
+                        print(f"    ⚠️ 處理項目 {processed_count + 1} 時出錯: {e}")
+                    
+                    processed_count += 1
+                    
+                except Exception as e:
+                    print(f"    ⚠️ 獲取項目列表時出錯: {e}")
+                    break
+            
+            print(f"    ✅ {bureau_name} 處理完成，共處理 {processed_count} 個項目")
+                        
         except Exception as e:
             print(f"  ❌ 抓取 {bureau_name} 錯誤: {e}")
     
@@ -850,12 +1250,10 @@ class CNMSANavigationWarningsScraper:
         print(f"\n🇨🇳 開始爬取中國海事局航行警告...")
         
         try:
-            # 載入網頁
             print("  📡 正在載入中國海事局網站...")
             self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
             time.sleep(5)
             
-            # 點擊航行警告
             print("  🖱️ 點擊航行警告選項...")
             nav_btn = self.wait.until(
                 EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), '航行警告')]"))
@@ -863,7 +1261,6 @@ class CNMSANavigationWarningsScraper:
             self.driver.execute_script("arguments[0].click();", nav_btn)
             time.sleep(3)
             
-            # 獲取海事局列表
             print("  📋 獲取海事局列表...")
             bureaus = [
                 b.text.strip() 
@@ -873,7 +1270,6 @@ class CNMSANavigationWarningsScraper:
             
             print(f"  📍 找到 {len(bureaus)} 個海事局")
             
-            # 遍歷海事局
             for b_name in bureaus:
                 try:
                     elem = self.driver.find_element(
@@ -881,7 +1277,7 @@ class CNMSANavigationWarningsScraper:
                         f"//div[@class='nav_lv2_text' and contains(text(), '{b_name}')]"
                     )
                     self.scrape_bureau_warnings(b_name, elem)
-                    time.sleep(1)  # 避免請求過快
+                    time.sleep(1)
                 except Exception as e:
                     print(f"    ⚠️ 跳過 {b_name}: {e}")
                     continue
@@ -891,7 +1287,6 @@ class CNMSANavigationWarningsScraper:
             traceback.print_exc()
         finally:
             try:
-                print("  🔒 關閉 WebDriver...")
                 self.driver.quit()
             except:
                 pass
@@ -900,6 +1295,7 @@ class CNMSANavigationWarningsScraper:
         return self.new_warnings
 
 
+# ==================== 7. 統一監控系統 ====================
 class UnifiedMaritimeWarningSystem:
     def __init__(self, webhook_url=None, enable_teams=True, send_mode='batch', 
                  mail_user=None, mail_pass=None, target_email=None):
@@ -910,16 +1306,18 @@ class UnifiedMaritimeWarningSystem:
         self.db_manager = DatabaseManager()
         self.teams_notifier = UnifiedTeamsNotifier(webhook_url) if webhook_url else None
         self.email_notifier = GmailRelayNotifier(mail_user, mail_pass, target_email)
+        self.coord_extractor = CoordinateExtractor()
+        self.map_plotter = MaritimeMapPlotter() if MAPPING_AVAILABLE else None
         
         self.enable_teams = enable_teams and webhook_url
         self.send_mode = send_mode
         
         # 初始化各爬蟲
         self.cn_scraper = CNMSANavigationWarningsScraper(
-            self.db_manager, self.keyword_manager, self.teams_notifier
+            self.db_manager, self.keyword_manager, self.teams_notifier, self.coord_extractor
         )
         self.tw_scraper = TWMaritimePortBureauScraper(
-            self.db_manager, self.keyword_manager, self.teams_notifier
+            self.db_manager, self.keyword_manager, self.teams_notifier, self.coord_extractor
         )
         
         self.all_new_warnings = []
@@ -930,6 +1328,7 @@ class UnifiedMaritimeWarningSystem:
     def run_all_scrapers(self):
         """執行所有爬蟲"""
         start_time = datetime.now()
+        map_path = None
         
         print(f"{'='*60}")
         print(f"🌊 開始執行多源海事警告監控")
@@ -941,35 +1340,48 @@ class UnifiedMaritimeWarningSystem:
             cn_warnings = self.cn_scraper.scrape_all_bureaus()
             self.all_new_warnings.extend(cn_warnings)
             self.all_captured_data.extend(self.cn_scraper.captured_warnings_data)
-            print(f"🇨🇳 中國海事局: 抓取到 {len(self.cn_scraper.captured_warnings_data)} 筆資料")
             
             # 2. 執行台灣航港局爬蟲
             print("\n" + "="*60)
-            tw_warnings = self.tw_scraper.scrape_all_pages()  # 只接收一個返回值
+            tw_warnings = self.tw_scraper.scrape_all_pages()
             self.all_new_warnings.extend(tw_warnings)
             self.all_captured_data.extend(self.tw_scraper.captured_warnings_data)
-            print(f"🇹🇼 台灣航港局: 抓取到 {len(self.tw_scraper.captured_warnings_data)} 筆資料")
             
-            # 3. 發送通知
-            if self.enable_teams and self.all_captured_data:  # 改用 captured_data 判斷
+            # 3. 繪製地圖
+            if self.all_captured_data and self.map_plotter:
+                print("\n" + "="*60)
+                print("🗺️ 正在繪製海圖...")
+                warnings_for_map = [
+                    {
+                        'title': w['title'],
+                        'coordinates': w.get('coordinates', []),
+                        'bureau': w['bureau'],
+                        'source': w.get('source', 'CN_MSA')
+                    }
+                    for w in self.all_captured_data
+                    if w.get('coordinates')
+                ]
+                
+                if warnings_for_map:
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    map_filename = f"maritime_warnings_{timestamp}.png"
+                    map_path = self.map_plotter.plot_warnings(warnings_for_map, map_filename)
+            
+            # 4. 發送通知
+            if self.enable_teams and self.all_captured_data:
                 self.send_notifications()
             
-            # 4. 生成報告
+            # 5. 生成報告
             duration = (datetime.now() - start_time).total_seconds()
-            self.generate_final_report(duration)
+            self.generate_final_report(duration, map_path)
             
         except Exception as e:
             print(f"❌ 執行過程發生錯誤: {e}")
             traceback.print_exc()
-            
-            # 發送錯誤通知
-            if self.email_notifier.enabled:
-                self.email_notifier.send_error_notification(str(e), traceback.format_exc())
     
     def send_notifications(self):
         """發送通知"""
         if self.send_mode == 'batch':
-            # 分別發送各來源的批量通知
             cn_warnings = [w for w in self.all_captured_data if w.get('source') == 'CN_MSA']
             tw_warnings = [w for w in self.all_captured_data if w.get('source') == 'TW_MPB']
             
@@ -979,7 +1391,8 @@ class UnifiedMaritimeWarningSystem:
                     cn_data.append((
                         w['id'], w['bureau'], w['title'], w['link'], 
                         w['time'], ', '.join(w['keywords']), 
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        w.get('coordinates', [])
                     ))
                 
                 if self.teams_notifier.send_batch_notification(cn_data, "CN_MSA"):
@@ -992,14 +1405,15 @@ class UnifiedMaritimeWarningSystem:
                     tw_data.append((
                         w['id'], w['bureau'], w['title'], w['link'], 
                         w['time'], ', '.join(w['keywords']), 
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        w.get('coordinates', [])
                     ))
                 
                 if self.teams_notifier.send_batch_notification(tw_data, "TW_MPB"):
                     for w in tw_warnings:
                         self.db_manager.mark_as_notified(w['id'])
     
-    def generate_final_report(self, duration):
+    def generate_final_report(self, duration, map_path=None):
         """生成最終報告"""
         print(f"\n{'='*60}")
         print(f"📊 執行結果摘要")
@@ -1008,18 +1422,21 @@ class UnifiedMaritimeWarningSystem:
         
         cn_count = len([w for w in self.all_captured_data if w.get('source') == 'CN_MSA'])
         tw_count = len([w for w in self.all_captured_data if w.get('source') == 'TW_MPB'])
+        total_coords = sum(len(w.get('coordinates', [])) for w in self.all_captured_data)
         
         print(f"🇨🇳 中國海事局新警告: {cn_count} 筆")
         print(f"🇹🇼 台灣航港局新警告: {tw_count} 筆")
         print(f"📈 總計新警告: {len(self.all_captured_data)} 筆")
+        print(f"📍 提取座標點: {total_coords} 個")
+        if map_path:
+            print(f"🗺️ 地圖: {map_path}")
         print(f"{'='*60}")
         
-        # 無論有沒有新警告都發送報告
+        # 生成報告
         json_data, html_data = self._generate_unified_report(duration)
-        self.email_notifier.send_trigger_email(json_data, html_data)
+        self.email_notifier.send_trigger_email(json_data, html_data, map_path)
         
         if self.all_captured_data:
-            # 匯出 Excel
             self.db_manager.export_to_excel()
             print("✅ 報告生成完成")
         else:
@@ -1036,25 +1453,26 @@ class UnifiedMaritimeWarningSystem:
         lt_now = utc_now + timedelta(hours=8)
         now_str_LT = lt_now.strftime('%Y-%m-%d %H:%M')
         
-        # 統計各來源數量
         cn_count = len([w for w in self.all_captured_data if w.get('source') == 'CN_MSA'])
         tw_count = len([w for w in self.all_captured_data if w.get('source') == 'TW_MPB'])
+        total_coords = sum(len(w.get('coordinates', [])) for w in self.all_captured_data)
         
         html = f"""
         <html><body style="{font_style} color:#333; line-height:1.5;">
             <div style="background:#003366; color:white; padding:20px; border-radius:6px 6px 0 0;">
-                <h2 style="margin: 0; font-size: 25px; font-weight: 700; letter-spacing: 0.5px;"> 
-                🌊 多源海事警告監控系統
+                <h2 style="margin: 0; font-size: 25px; font-weight: 700;"> 
+                🌊 多源海事警告監控系統 (含經緯度標註)
                 </h2>
-                <div style="margin-top: 8px; font-size: 12px; color: #a3cbe8; font-weight: 500;">
-                📅 Last Update: {now_str_LT} (TPE) <span style="opacity: 0.5;">|</span> {now_str_UTC} (UTC)
+                <div style="margin-top: 8px; font-size: 12px; color: #a3cbe8;">
+                📅 Last Update: {now_str_LT} (TPE) | {now_str_UTC} (UTC)
                 </div>
             </div>
             <div style="background:#f8f9fa; border:1px solid #ddd; padding:15px; margin-bottom:20px;">
                 <strong style="color:{status_color};">📊 監控報告摘要</strong><br>
                 🇨🇳 中國海事局: {cn_count} 個新警告<br>
                 🇹🇼 台灣航港局: {tw_count} 個新警告<br>
-                <strong>總計: {count} 個新警告</strong>
+                <strong>總計: {count} 個新警告</strong><br>
+                📍 提取座標點: {total_coords} 個
             </div>
         """
         
@@ -1065,6 +1483,7 @@ class UnifiedMaritimeWarningSystem:
                     <th style="padding:10px; border-bottom:2px solid #ccc;">發佈單位</th>
                     <th style="padding:10px; border-bottom:2px solid #ccc;">警告標題</th>
                     <th style="padding:10px; border-bottom:2px solid #ccc;">發佈時間</th>
+                    <th style="padding:10px; border-bottom:2px solid #ccc;">座標</th>
                 </tr>"""
             
             for i, item in enumerate(self.all_captured_data):
@@ -1076,6 +1495,13 @@ class UnifiedMaritimeWarningSystem:
                     f"<span style='background:#fff3cd; padding:2px 5px; margin-right:5px; border-radius:3px; font-size:12px;'>{k}</span>" 
                     for k in item['keywords']
                 ])
+                # 座標顯示
+                coords = item.get('coordinates', [])
+                coord_html = "無座標"
+                if coords:
+                    coord_html = "<br>".join([f"({c[0]:.4f}°, {c[1]:.4f}°)" for c in coords[:3]])
+                    if len(coords) > 3:
+                        coord_html += f"<br><small style='color:#666;'>...還有 {len(coords)-3} 個</small>"
                 
                 html += f"""<tr style="background:{bg};">
                     <td style="padding:10px; border-bottom:1px solid #eee; font-weight:bold;">{source_flag} {source_name}</td>
@@ -1085,6 +1511,7 @@ class UnifiedMaritimeWarningSystem:
                         <div style="margin-top:5px;">{kw_html}</div>
                     </td>
                     <td style="padding:10px; border-bottom:1px solid #eee; color:#666;">{item['time']}</td>
+                    <td style="padding:10px; border-bottom:1px solid #eee; font-size:12px; color:#666;">{coord_html}</td>
                 </tr>"""
             html += "</table>"
         else:
@@ -1094,7 +1521,7 @@ class UnifiedMaritimeWarningSystem:
             <div style="margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 20px; font-size: 15px; color: #9ca3af; text-align: center; {font_style}">
                 <p style="margin: 0;">Wan Hai Lines Ltd. | Marine Technology Division</p>
                 <p style="margin: 0;color: blue;">Present by Fleet Risk Department</p>
-                <p style="margin: 0 0 0 0;">Multi-Source Maritime Warning System | Automated Monitoring</p>
+                <p style="margin: 0;">Multi-Source Maritime Warning System | Automated Monitoring with Coordinate Extraction</p>
             </div>
         </body>
         </html>
@@ -1106,16 +1533,18 @@ class UnifiedMaritimeWarningSystem:
             "total_warnings": count,
             "cn_msa_warnings": cn_count,
             "tw_mpb_warnings": tw_count,
+            "total_coordinates": total_coords,
             "new_warnings": self.all_captured_data
         }
         
         return json_data, html
 
 
-# ==================== 5. 主程式進入點 ====================
+# ==================== 8. 主程式進入點 ====================
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("🌊 航行警告監控系統(CN & TW)")
+    print("🌊 統一海事警告監控系統 (CN MSA + TW MPB)")
+    print("   支援經緯度提取、地圖繪製、Teams 通知、Email 報告")
     print("="*60 + "\n")
     
     # 從環境變數讀取設定
@@ -1125,24 +1554,57 @@ if __name__ == "__main__":
     TARGET_EMAIL = os.getenv('TARGET_EMAIL')
     
     # 檢查設定
-    if not TEAMS_WEBHOOK:
-        print("⚠️ 警告: 未設定 TEAMS_WEBHOOK_URL")
-    if not MAIL_USER or not MAIL_PASS:
-        print("⚠️ 警告: 未設定 Email 帳號密碼")
-    if not TARGET_EMAIL:
-        print("⚠️ 警告: 未設定 TARGET_EMAIL")
+    config_status = []
+    if TEAMS_WEBHOOK:
+        config_status.append("✅ Teams Webhook")
+    else:
+        config_status.append("⚠️ Teams Webhook 未設定")
     
+    if MAIL_USER and MAIL_PASS:
+        config_status.append("✅ Email 帳號")
+    else:
+        config_status.append("⚠️ Email 帳號未設定")
+    
+    if TARGET_EMAIL:
+        config_status.append("✅ 收件人")
+    else:
+        config_status.append("⚠️ 收件人未設定")
+    
+    print("📋 設定檢查:")
+    for status in config_status:
+        print(f"   {status}")
     print()
     
     # 初始化統一監控系統
-    system = UnifiedMaritimeWarningSystem(
-        webhook_url=TEAMS_WEBHOOK,
-        enable_teams=bool(TEAMS_WEBHOOK),
-        send_mode='batch',
-        mail_user=MAIL_USER,
-        mail_pass=MAIL_PASS,
-        target_email=TARGET_EMAIL
-    )
+    try:
+        system = UnifiedMaritimeWarningSystem(
+            webhook_url=TEAMS_WEBHOOK,
+            enable_teams=bool(TEAMS_WEBHOOK),
+            send_mode='batch',
+            mail_user=MAIL_USER,
+            mail_pass=MAIL_PASS,
+            target_email=TARGET_EMAIL
+        )
+        
+        # 執行監控
+        system.run_all_scrapers()
+        
+        print("\n" + "="*60)
+        print("🎉 系統執行完成！")
+        print("="*60)
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠️ 使用者中斷執行")
+    except Exception as e:
+        print(f"\n\n❌ 系統執行失敗: {e}")
+        traceback.print_exc()
+        
+        # 嘗試發送錯誤通知
+        try:
+            error_notifier = GmailRelayNotifier(MAIL_USER, MAIL_PASS, TARGET_EMAIL)
+            error_notifier.send_error_notification(str(e), traceback.format_exc())
+        except:
+            pass
     
-    # 執行監控
-    system.run_all_scrapers()
+    print("\n🚀 祝您有美好的一天！\n")
+      
