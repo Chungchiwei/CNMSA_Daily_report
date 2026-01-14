@@ -69,153 +69,215 @@ if os.name == 'nt':
     sys.stderr = ErrorFilter(sys.stderr)
 
 
-# ==================== 1. 經緯度提取器 (增強版) ====================
+# ==================== 2. 座標提取器 (增強版) ====================
 class CoordinateExtractor:
-    """提取文本中的經緯度座標 (支援多種格式)"""
-    
     def __init__(self):
-        self.patterns = [
-            # 格式1: 18-17.37N 109-22.17E (度-分.小數)
-            r'(\d{1,3})-(\d{1,2}\.\d+)\s*([NSns北南])\s+(\d{1,3})-(\d{1,2}\.\d+)\s*([EWew東西])',
+        # ========== 正則表達式模式 (按優先順序) ==========
+        
+        # 1. 度-分.小數格式 (最常見)
+        # 例如: 35-23.50N 119-35.92E, 18-17.37N 109-22.17E
+        self.pattern_dm_decimal = re.compile(
+            r'(\d{1,3})[°\-\s]*(\d{1,2}\.?\d*)[′\'\-\s]*([NSns])\s*[,，\s]*'
+            r'(\d{1,3})[°\-\s]*(\d{1,2}\.?\d*)[′\'\-\s]*([EWew])',
+            re.IGNORECASE
+        )
+        
+        # 2. 度分秒格式
+        # 例如: 25°30'15"N 121°20'30"E
+        self.pattern_dms = re.compile(
+            r'(\d{1,3})[°\s]*(\d{1,2})[′\'\s]*(\d{1,2}\.?\d*)[″"\s]*([NSns])\s*[,，\s]*'
+            r'(\d{1,3})[°\s]*(\d{1,2})[′\'\s]*(\d{1,2}\.?\d*)[″"\s]*([EWew])',
+            re.IGNORECASE
+        )
+        
+        # 3. 純度分格式 (無秒)
+        # 例如: 25°30'N 121°20'E
+        self.pattern_dm = re.compile(
+            r'(\d{1,3})[°\s]*(\d{1,2})[′\'\s]*([NSns])\s*[,，\s]*'
+            r'(\d{1,3})[°\s]*(\d{1,2})[′\'\s]*([EWew])',
+            re.IGNORECASE
+        )
+        
+        # 4. 十進制度數格式
+        # 例如: 25.5N 121.3E, 25.5°N 121.3°E
+        self.pattern_decimal = re.compile(
+            r'(\d{1,3}\.?\d*)[°\s]*([NSns])\s*[,，\s]*'
+            r'(\d{1,3}\.?\d*)[°\s]*([EWew])',
+            re.IGNORECASE
+        )
+        
+        # 5. 中文格式
+        # 例如: 北緯25度30分 東經121度20分
+        self.pattern_chinese = re.compile(
+            r'[北南]緯\s*(\d{1,3})\s*度\s*(\d{1,2}\.?\d*)\s*分\s*'
+            r'[東西]經\s*(\d{1,3})\s*度\s*(\d{1,2}\.?\d*)\s*分',
+            re.IGNORECASE
+        )
+        
+        print("  🗺️ 座標提取器初始化完成")
+    
+    def _convert_to_decimal(self, degrees, minutes=0, seconds=0, direction='N'):
+        """轉換為十進制度數"""
+        try:
+            degrees = float(degrees)
+            minutes = float(minutes) if minutes else 0
+            seconds = float(seconds) if seconds else 0
             
-            # 格式2: 18-17N 109-22E (度-分)
-            r'(\d{1,3})-(\d{1,2})\s*([NSns北南])\s+(\d{1,3})-(\d{1,2})\s*([EWew東西])',
+            decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
             
-            # 格式3: 25°30'N 121°20'E
-            r'(\d{1,3})[°度]\s*(\d{1,2})[\'′分]?\s*([NSns北南])\s+(\d{1,3})[°度]\s*(\d{1,2})[\'′分]?\s*([EWew東西])',
+            # 根據方向調整正負號
+            if direction.upper() in ['S', 'W']:
+                decimal = -decimal
             
-            # 格式4: 25°30.5'N 121°20.8'E (含小數分)
-            r'(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?\s*([NSns北南])\s+(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?\s*([EWew東西])',
+            return round(decimal, 6)
+        except Exception as e:
+            print(f"    ⚠️ 座標轉換錯誤: {e}")
+            return None
+    
+    def _validate_coordinate(self, lat, lon):
+        """驗證座標是否在合理範圍內 (亞太海域)"""
+        try:
+            lat = float(lat)
+            lon = float(lon)
             
-            # 格式5: N25°30' E121°20'
-            r'([NSns北南])\s*(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?\s+([EWew東西])\s*(\d{1,3})[°度]\s*(\d{1,2}\.?\d*)[\'′分]?',
+            # 緯度範圍: -60° 到 60° (涵蓋南北半球主要海域)
+            # 經度範圍: 60° 到 180° (亞太地區)
+            if -60 <= lat <= 60 and 60 <= lon <= 180:
+                return True
             
-            # 格式6: 25.5N 121.3E (十進制度)
-            r'(\d{1,3}\.\d+)\s*[°度]?\s*([NSns北南])\s+(\d{1,3}\.\d+)\s*[°度]?\s*([EWew東西])',
+            # 西經轉換 (如果有的話)
+            if -180 <= lon < 0:
+                lon = 360 + lon
+                if 60 <= lon <= 180:
+                    return True
             
-            # 格式7: 北緯25度30分 東經121度20分
-            r'[北南緯]\s*(\d{1,3})\s*度\s*(\d{1,2})\s*分\s+[東西經]\s*(\d{1,3})\s*度\s*(\d{1,2})\s*分',
-        ]
+            return False
+        except:
+            return False
     
     def extract_coordinates(self, text):
-        """從文本中提取所有經緯度座標"""
+        """從文字中提取所有座標 (增強版)"""
+        if not text:
+            return []
+        
         coordinates = []
         
-        if not text:
-            return coordinates
+        # 預處理文字：統一格式
+        text = text.replace('，', ',').replace('。', '.')
         
-        # 預處理
-        text = text.replace('、', ' ').replace('，', ' ').replace('。', ' ')
+        # ========== 1. 度-分.小數格式 (優先) ==========
+        matches = self.pattern_dm_decimal.findall(text)
+        for match in matches:
+            try:
+                lat_deg, lat_min, lat_dir, lon_deg, lon_min, lon_dir = match
+                
+                # 轉換為十進制
+                lat = self._convert_to_decimal(lat_deg, lat_min, 0, lat_dir)
+                lon = self._convert_to_decimal(lon_deg, lon_min, 0, lon_dir)
+                
+                if lat is not None and lon is not None:
+                    if self._validate_coordinate(lat, lon):
+                        coord = (lat, lon)
+                        if coord not in coordinates:
+                            coordinates.append(coord)
+                            print(f"    ✅ 提取座標 (度-分.小數): {lat:.4f}°, {lon:.4f}°")
+            except Exception as e:
+                print(f"    ⚠️ 解析座標失敗 (度-分.小數): {match} - {e}")
+                continue
         
-        for pattern in self.patterns:
-            matches = re.finditer(pattern, text, re.IGNORECASE)
-            for match in matches:
-                try:
-                    coord = self._parse_match(match, pattern)
-                    if coord and self._validate_coordinate(coord):
-                        coordinates.append(coord)
-                except Exception as e:
-                    continue
+        # ========== 2. 度分秒格式 ==========
+        matches = self.pattern_dms.findall(text)
+        for match in matches:
+            try:
+                lat_deg, lat_min, lat_sec, lat_dir, lon_deg, lon_min, lon_sec, lon_dir = match
+                
+                lat = self._convert_to_decimal(lat_deg, lat_min, lat_sec, lat_dir)
+                lon = self._convert_to_decimal(lon_deg, lon_min, lon_sec, lon_dir)
+                
+                if lat is not None and lon is not None:
+                    if self._validate_coordinate(lat, lon):
+                        coord = (lat, lon)
+                        if coord not in coordinates:
+                            coordinates.append(coord)
+                            print(f"    ✅ 提取座標 (度分秒): {lat:.4f}°, {lon:.4f}°")
+            except Exception as e:
+                print(f"    ⚠️ 解析座標失敗 (度分秒): {match} - {e}")
+                continue
         
-        # 去重
-        unique_coords = []
-        for coord in coordinates:
-            is_duplicate = False
-            for existing in unique_coords:
-                if abs(coord[0] - existing[0]) < 0.01 and abs(coord[1] - existing[1]) < 0.01:
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
-                unique_coords.append(coord)
+        # ========== 3. 純度分格式 ==========
+        matches = self.pattern_dm.findall(text)
+        for match in matches:
+            try:
+                lat_deg, lat_min, lat_dir, lon_deg, lon_min, lon_dir = match
+                
+                lat = self._convert_to_decimal(lat_deg, lat_min, 0, lat_dir)
+                lon = self._convert_to_decimal(lon_deg, lon_min, 0, lon_dir)
+                
+                if lat is not None and lon is not None:
+                    if self._validate_coordinate(lat, lon):
+                        coord = (lat, lon)
+                        if coord not in coordinates:
+                            coordinates.append(coord)
+                            print(f"    ✅ 提取座標 (度分): {lat:.4f}°, {lon:.4f}°")
+            except Exception as e:
+                print(f"    ⚠️ 解析座標失敗 (度分): {match} - {e}")
+                continue
         
-        return unique_coords
+        # ========== 4. 十進制度數格式 ==========
+        matches = self.pattern_decimal.findall(text)
+        for match in matches:
+            try:
+                lat, lat_dir, lon, lon_dir = match
+                
+                lat = self._convert_to_decimal(lat, 0, 0, lat_dir)
+                lon = self._convert_to_decimal(lon, 0, 0, lon_dir)
+                
+                if lat is not None and lon is not None:
+                    if self._validate_coordinate(lat, lon):
+                        coord = (lat, lon)
+                        if coord not in coordinates:
+                            coordinates.append(coord)
+                            print(f"    ✅ 提取座標 (十進制): {lat:.4f}°, {lon:.4f}°")
+            except Exception as e:
+                print(f"    ⚠️ 解析座標失敗 (十進制): {match} - {e}")
+                continue
+        
+        # ========== 5. 中文格式 ==========
+        matches = self.pattern_chinese.findall(text)
+        for match in matches:
+            try:
+                lat_deg, lat_min, lon_deg, lon_min = match
+                
+                # 中文格式預設北緯東經
+                lat = self._convert_to_decimal(lat_deg, lat_min, 0, 'N')
+                lon = self._convert_to_decimal(lon_deg, lon_min, 0, 'E')
+                
+                if lat is not None and lon is not None:
+                    if self._validate_coordinate(lat, lon):
+                        coord = (lat, lon)
+                        if coord not in coordinates:
+                            coordinates.append(coord)
+                            print(f"    ✅ 提取座標 (中文): {lat:.4f}°, {lon:.4f}°")
+            except Exception as e:
+                print(f"    ⚠️ 解析座標失敗 (中文): {match} - {e}")
+                continue
+        
+        return coordinates
     
-    def _parse_match(self, match, pattern):
-        """解析正則匹配結果為十進制座標"""
-        groups = match.groups()
+    def format_coordinates(self, coordinates):
+        """格式化座標列表為字串"""
+        if not coordinates:
+            return "無座標資訊"
         
-        # 格式6: 十進制度數
-        if len(groups) == 4 and '\\.' in pattern and 'degree' not in pattern:
-            try:
-                lat = float(groups[0])
-                lat_dir = groups[1].upper()
-                lon = float(groups[2])
-                lon_dir = groups[3].upper()
-                
-                if lat_dir in ['S', 's', '南']:
-                    lat = -lat
-                if lon_dir in ['W', 'w', '西']:
-                    lon = -lon
-                
-                return (lat, lon)
-            except:
-                return None
+        formatted = []
+        for lat, lon in coordinates:
+            # 判斷方向
+            lat_dir = 'N' if lat >= 0 else 'S'
+            lon_dir = 'E' if lon >= 0 else 'W'
+            
+            formatted.append(f"{abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}")
         
-        # 格式5: N25°30' E121°20'
-        if len(groups) >= 6 and groups[0] in ['N', 'S', 'n', 's', '北', '南']:
-            try:
-                lat_dir = groups[0].upper()
-                lat_deg = float(groups[1])
-                lat_min = float(groups[2])
-                lon_dir = groups[3].upper()
-                lon_deg = float(groups[4])
-                lon_min = float(groups[5])
-                
-                lat = lat_deg + lat_min / 60
-                lon = lon_deg + lon_min / 60
-                
-                if lat_dir in ['S', 's', '南']:
-                    lat = -lat
-                if lon_dir in ['W', 'w', '西']:
-                    lon = -lon
-                
-                return (lat, lon)
-            except:
-                return None
-        
-        # 其他格式: 度分格式
-        if len(groups) >= 6:
-            try:
-                lat_deg = float(groups[0])
-                lat_min = float(groups[1])
-                lat_dir = groups[2].upper() if len(groups[2]) > 0 else 'N'
-                lon_deg = float(groups[3])
-                lon_min = float(groups[4])
-                lon_dir = groups[5].upper() if len(groups[5]) > 0 else 'E'
-                
-                lat = lat_deg + lat_min / 60
-                lon = lon_deg + lon_min / 60
-                
-                if lat_dir in ['S', 's', '南']:
-                    lat = -lat
-                if lon_dir in ['W', 'w', '西']:
-                    lon = -lon
-                
-                return (lat, lon)
-            except:
-                return None
-        
-        return None
-    
-    def _validate_coordinate(self, coord):
-        """驗證座標是否合理"""
-        if not coord or len(coord) != 2:
-            return False
-        
-        lat, lon = coord
-        
-        # 基本範圍檢查
-        if lat < -90 or lat > 90:
-            return False
-        if lon < -180 or lon > 180:
-            return False
-        
-        # 亞太海域範圍 (放寬範圍以包含台灣)
-        # 緯度: 0°N - 60°N, 經度: 70°E - 180°E
-        if not (0 <= lat <= 60 and 70 <= lon <= 180):
-            return False
-        
-        return True
+        return " | ".join(formatted)
 
 
 # ==================== 2. 海圖繪製器 ====================
