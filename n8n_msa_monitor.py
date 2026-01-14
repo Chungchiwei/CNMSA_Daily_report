@@ -1523,7 +1523,7 @@ class UnifiedMaritimeWarningSystem:
         <html><body style="{font_style} color:#333; line-height:1.5;">
             <div style="background:#003366; color:white; padding:20px; border-radius:6px 6px 0 0;">
                 <h2 style="margin: 0; font-size: 25px; font-weight: 700;"> 
-                🌊 多源海事警告監控系統 (含經緯度標註)
+                🌊 航行警告監控系統(CN & TW) 
                 </h2>
                 <div style="margin-top: 8px; font-size: 12px; color: #a3cbe8;">
                 📅 Last Update: {now_str_LT} (TPE) | {now_str_UTC} (UTC)
@@ -1670,3 +1670,4 @@ if __name__ == "__main__":
     
     print("\n🚀 祝您有美好的一天！\n")
       
+
