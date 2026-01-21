@@ -451,7 +451,7 @@ class GmailRelayNotifier:
         
         try:
             msg = MIMEMultipart('related')
-            msg['Subject'] = f"🌊 海事警告監控報告 - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            msg['Subject'] = f"🌊 航行警告監控報告 - {(datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}(TPE) / {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}(UTC)"
             msg['From'] = self.mail_user
             msg['To'] = self.target_email
             
@@ -502,7 +502,7 @@ class GmailRelayNotifier:
         <body>
             <div class="container">
                 <h1>🌊 海事警告監控報告</h1>
-                <p><strong>報告時間：</strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>報告時間：</strong>{(datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')}(TPE) / {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}(UTC)"</p>
                 <p><strong>警告數量：</strong>{len(warnings_data)} 筆</p>
                 <hr>
         """
@@ -537,7 +537,8 @@ class GmailRelayNotifier:
         html += """
                 <div class="footer">
                     <p>此為自動發送的郵件，請勿直接回覆</p>
-                    <p>海事警告監控系統 © 2024</p>
+                    <p>航行警告監控系統 </p>
+                    <p>Navigation Warning Monitor System </p>
                 </div>
             </div>
         </body>
