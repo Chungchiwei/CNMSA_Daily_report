@@ -1,12 +1,13 @@
 import json
 import os
 from datetime import datetime
+import re
 
 class KeywordManager:
     def __init__(self, config_file='keywords_config.json'):
         self.config_file = config_file
         self.keywords = []
-        self.keyword_categories = {}  # 新增：關鍵字分類
+        self.keyword_categories = {}
         self.load_keywords()
     
     def load_keywords(self):
@@ -31,15 +32,16 @@ class KeywordManager:
         """設定預設關鍵字（支援中文繁簡體和英文）"""
         # 軍事演習相關
         military_keywords = [
-            # 中文簡體 (中國海事局)
+            # 中文簡體
             "军事训练", "军事演习", "海上演习", "射击演习", "实弹射击", 
-            "军事活动", "军事行动", "军事封锁", "军事禁区","军事演练","军事演习活动","军事演习训练","军事演习行动","军事演习封锁","军事演习禁区","军事演习实弹","军事演习射击","军事演习海上","军事演习训练","军事任务",
-            # 中文繁體 (台灣航港局)
+            "军事活动", "军事行动", "军事封锁", "军事禁区", "军事演练",
+            "军事任务",
+            # 中文繁體
             "軍事訓練", "軍事演習", "海上演習", "射擊演習", "實彈射擊",
-            "軍事活動", "軍事行動", "軍事封鎖", "軍事禁區",
+            "軍事活動", "軍事行動", "軍事封鎖", "軍事禁區", "軍事演練",
             # 英文
             "MILITARY EXERCISES", "NAVAL EXERCISES", "FIRING EXERCISES", 
-            "LIVE FIRING", "MILITARY ACTIVITY", "MILITARY OPERATIONS","MILITARY MISSION", 
+            "LIVE FIRING", "MILITARY ACTIVITY", "MILITARY OPERATIONS", 
             "MILITARY BLOCKADE", "MILITARY ZONE"
         ]
         
@@ -95,10 +97,6 @@ class KeywordManager:
             "PLA", "PEOPLE'S LIBERATION ARMY", "EAST CHINA SEA", "SOUTH CHINA SEA"
         ]
         
-        # 合併所有關鍵字
-        self.keywords = (military_keywords + danger_keywords + weapon_keywords + 
-                        area_keywords + taiwan_keywords + china_keywords)
-        
         # 設定分類
         self.keyword_categories = {
             "軍事演習": military_keywords,
@@ -109,8 +107,12 @@ class KeywordManager:
             "中國特有": china_keywords
         }
         
-        # 去除重複並排序
-        self.keywords = sorted(list(set(self.keywords)))
+        # 合併所有關鍵字並去重
+        all_keywords = set()
+        for keywords in self.keyword_categories.values():
+            all_keywords.update(keywords)
+        
+        self.keywords = sorted(list(all_keywords))
         
         self.save_keywords()
         print(f"✅ 已設定 {len(self.keywords)} 個預設關鍵字")
@@ -122,8 +124,8 @@ class KeywordManager:
                 'keywords': self.keywords,
                 'categories': self.keyword_categories,
                 'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'version': '2.0',  # 多源版本
-                'sources': ['CN_MSA', 'TW_MPB']  # 支援的來源
+                'version': '2.0',
+                'sources': ['CN_MSA', 'TW_MPB']
             }
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -133,17 +135,46 @@ class KeywordManager:
             print(f"❌ 儲存關鍵字設定失敗: {e}")
             return False
     
+    def detect_language(self, text):
+        """檢測文字語言類型"""
+        # 繁體中文特徵字
+        traditional_chars = set('國軍艦飛彈導潛偵礙協尋臺灣')
+        # 簡體中文特徵字
+        simplified_chars = set('国军舰飞弹导潜侦碍协寻台湾')
+        
+        text_chars = set(text)
+        
+        # 檢查是否為英文
+        if text.isupper() and re.match(r'^[A-Z\s]+$', text):
+            return 'EN'
+        
+        # 檢查繁體特徵
+        if text_chars & traditional_chars:
+            return 'TW'
+        
+        # 檢查簡體特徵
+        if text_chars & simplified_chars:
+            return 'CN'
+        
+        # 檢查是否包含中文
+        if any('\u4e00' <= c <= '\u9fff' for c in text):
+            # 進一步判斷繁簡體
+            try:
+                # 使用 Unicode 範圍判斷
+                if any(ord(c) in range(0x3400, 0x4DBF) for c in text):
+                    return 'TW'
+                return 'CN'
+            except:
+                return 'CN'
+        
+        return 'OTHER'
+    
     def add_keyword(self, keyword, category=None):
         """新增關鍵字"""
         keyword = keyword.strip()
         
-        # 長度驗證
         if len(keyword) < 2:
             print("❌ 關鍵字至少需要 2 個字元")
-            return False
-        
-        if not keyword:
-            print("❌ 關鍵字不能為空")
             return False
         
         # 檢查是否已存在（不區分大小寫）
@@ -154,7 +185,9 @@ class KeywordManager:
         self.keywords.append(keyword)
         
         # 如果指定分類，加入分類
-        if category and category in self.keyword_categories:
+        if category:
+            if category not in self.keyword_categories:
+                self.keyword_categories[category] = []
             self.keyword_categories[category].append(keyword)
         
         # 重新排序
@@ -166,7 +199,6 @@ class KeywordManager:
     
     def remove_keyword(self, keyword):
         """移除關鍵字"""
-        # 不區分大小寫搜尋
         found_keyword = None
         for k in self.keywords:
             if k.lower() == keyword.lower():
@@ -176,7 +208,7 @@ class KeywordManager:
         if found_keyword:
             self.keywords.remove(found_keyword)
             
-            # 從分類中移除
+            # 從所有分類中移除
             for category, keywords in self.keyword_categories.items():
                 if found_keyword in keywords:
                     keywords.remove(found_keyword)
@@ -196,11 +228,6 @@ class KeywordManager:
             print("❌ 新關鍵字至少需要 2 個字元")
             return False
         
-        if not new_keyword:
-            print("❌ 新關鍵字不能為空")
-            return False
-        
-        # 不區分大小寫搜尋
         found_keyword = None
         for k in self.keywords:
             if k.lower() == old_keyword.lower():
@@ -211,12 +238,11 @@ class KeywordManager:
             index = self.keywords.index(found_keyword)
             self.keywords[index] = new_keyword
             
-            # 更新分類中的關鍵字
+            # 更新所有分類中的關鍵字
             for category, keywords in self.keyword_categories.items():
                 if found_keyword in keywords:
                     keywords[keywords.index(found_keyword)] = new_keyword
             
-            # 重新排序
             self.keywords = sorted(self.keywords)
             
             self.save_keywords()
@@ -237,12 +263,13 @@ class KeywordManager:
         print("=" * 60)
         
         if show_categories and self.keyword_categories:
-            # 按分類顯示
             for category, keywords in self.keyword_categories.items():
                 if keywords:
                     print(f"\n📂 {category} ({len(keywords)} 個):")
                     for i, keyword in enumerate(sorted(keywords), 1):
-                        print(f"   {i:2d}. {keyword}")
+                        lang = self.detect_language(keyword)
+                        lang_mark = {'TW': '🇹🇼', 'CN': '🇨🇳', 'EN': '🌐'}.get(lang, '📝')
+                        print(f"   {i:2d}. {lang_mark} {keyword}")
             
             # 顯示未分類的關鍵字
             categorized = set()
@@ -253,19 +280,13 @@ class KeywordManager:
             if uncategorized:
                 print(f"\n📝 未分類 ({len(uncategorized)} 個):")
                 for i, keyword in enumerate(uncategorized, 1):
-                    print(f"   {i:2d}. {keyword}")
+                    lang = self.detect_language(keyword)
+                    lang_mark = {'TW': '🇹🇼', 'CN': '🇨🇳', 'EN': '🌐'}.get(lang, '📝')
+                    print(f"   {i:2d}. {lang_mark} {keyword}")
         else:
-            # 簡單列表顯示
             for i, keyword in enumerate(self.keywords, 1):
-                # 標示語言類型
-                if any('\u4e00' <= c <= '\u9fff' for c in keyword):
-                    if any(c in '繁體台灣國軍' for c in keyword):
-                        lang_mark = "🇹🇼"
-                    else:
-                        lang_mark = "🇨🇳"
-                else:
-                    lang_mark = "🌐"
-                
+                lang = self.detect_language(keyword)
+                lang_mark = {'TW': '🇹🇼', 'CN': '🇨🇳', 'EN': '🌐'}.get(lang, '📝')
                 print(f"{i:2d}. {lang_mark} {keyword}")
         
         print("=" * 60 + "\n")
@@ -278,36 +299,13 @@ class KeywordManager:
         """根據來源類型獲取相關關鍵字"""
         if source_type == "TW_MPB":
             # 台灣航港局：繁體中文 + 英文 + 台灣特有
-            taiwan_keywords = []
-            for keyword in self.keywords:
-                # 繁體中文關鍵字
-                if any(c in '繁體台灣國軍航港局' for c in keyword):
-                    taiwan_keywords.append(keyword)
-                # 英文關鍵字
-                elif keyword.isupper() and keyword.replace(' ', '').replace('_', '').isalpha():
-                    taiwan_keywords.append(keyword)
-                # 通用中文關鍵字（簡繁通用）
-                elif keyword in ['失控', '危險', '演習', '軍事', '禁航']:
-                    taiwan_keywords.append(keyword)
-            return taiwan_keywords
+            return [k for k in self.keywords if self.detect_language(k) in ['TW', 'EN']]
         
         elif source_type == "CN_MSA":
             # 中國海事局：簡體中文 + 英文 + 中國特有
-            china_keywords = []
-            for keyword in self.keywords:
-                # 簡體中文關鍵字
-                if any(c in '简体中国解放军海事局' for c in keyword):
-                    china_keywords.append(keyword)
-                # 英文關鍵字
-                elif keyword.isupper() and keyword.replace(' ', '').replace('_', '').isalpha():
-                    china_keywords.append(keyword)
-                # 通用中文關鍵字
-                elif keyword in ['失控', '危险', '演习', '军事', '禁航']:
-                    china_keywords.append(keyword)
-            return china_keywords
+            return [k for k in self.keywords if self.detect_language(k) in ['CN', 'EN']]
         
         else:
-            # 預設返回所有關鍵字
             return self.keywords.copy()
     
     def import_keywords(self, keywords_list, category=None):
@@ -319,14 +317,14 @@ class KeywordManager:
                 not any(k.lower() == keyword.lower() for k in self.keywords)):
                 self.keywords.append(keyword)
                 
-                # 加入指定分類
-                if category and category in self.keyword_categories:
+                if category:
+                    if category not in self.keyword_categories:
+                        self.keyword_categories[category] = []
                     self.keyword_categories[category].append(keyword)
                 
                 added += 1
         
         if added > 0:
-            # 重新排序
             self.keywords = sorted(self.keywords)
             self.save_keywords()
             print(f"✅ 已匯入 {added} 個新關鍵字" + (f" (分類: {category})" if category else ""))
@@ -366,14 +364,29 @@ class KeywordManager:
         print(f"✅ 已新增分類: {category_name}")
         return True
     
+    def remove_category(self, category_name):
+        """移除關鍵字分類（不刪除關鍵字本身）"""
+        if category_name not in self.keyword_categories:
+            print(f"⚠️ 分類 '{category_name}' 不存在")
+            return False
+        
+        del self.keyword_categories[category_name]
+        self.save_keywords()
+        print(f"✅ 已移除分類: {category_name}")
+        return True
+    
     def get_statistics(self):
         """獲取關鍵字統計資訊"""
+        tw_count = len([k for k in self.keywords if self.detect_language(k) == 'TW'])
+        cn_count = len([k for k in self.keywords if self.detect_language(k) == 'CN'])
+        en_count = len([k for k in self.keywords if self.detect_language(k) == 'EN'])
+        
         stats = {
             'total': len(self.keywords),
             'categories': len(self.keyword_categories),
-            'chinese_traditional': len([k for k in self.keywords if any(c in '繁體台灣國軍' for c in k)]),
-            'chinese_simplified': len([k for k in self.keywords if any(c in '简体中国解放军' for c in k)]),
-            'english': len([k for k in self.keywords if k.isupper() and k.replace(' ', '').replace('_', '').isalpha()]),
+            'chinese_traditional': tw_count,
+            'chinese_simplified': cn_count,
+            'english': en_count,
             'by_category': {cat: len(keywords) for cat, keywords in self.keyword_categories.items()}
         }
         return stats
@@ -387,7 +400,7 @@ class KeywordManager:
 
 
 def interactive_menu():
-    """互動式選單（多源版本）"""
+    """互動式選單"""
     manager = KeywordManager()
     
     while True:
@@ -403,13 +416,14 @@ def interactive_menu():
         print("7. 匯出關鍵字")
         print("8. 按來源匯出關鍵字")
         print("9. 新增分類")
-        print("10. 查看統計資訊")
-        print("11. 重設為預設關鍵字")
-        print("12. 清空所有關鍵字")
+        print("10. 移除分類")
+        print("11. 查看統計資訊")
+        print("12. 重設為預設關鍵字")
+        print("13. 清空所有關鍵字")
         print("0. 離開")
         print("=" * 60)
         
-        choice = input("\n請選擇功能 (0-12): ").strip()
+        choice = input("\n請選擇功能 (0-13): ").strip()
         
         if choice == '1':
             manager.list_keywords(show_categories=False)
@@ -419,9 +433,12 @@ def interactive_menu():
             
         elif choice == '3':
             keyword = input("請輸入要新增的關鍵字: ").strip()
-            print("可用分類:", list(manager.keyword_categories.keys()))
-            category = input("請輸入分類 (可選): ").strip()
-            category = category if category in manager.keyword_categories else None
+            if manager.keyword_categories:
+                print("可用分類:", ', '.join(manager.keyword_categories.keys()))
+                category = input("請輸入分類 (可選，直接按 Enter 跳過): ").strip()
+                category = category if category else None
+            else:
+                category = None
             manager.add_keyword(keyword, category)
             
         elif choice == '4':
@@ -440,9 +457,12 @@ def interactive_menu():
             if not filename:
                 filename = 'keywords_import.txt'
             
-            print("可用分類:", list(manager.keyword_categories.keys()))
-            category = input("請輸入分類 (可選): ").strip()
-            category = category if category in manager.keyword_categories else None
+            if manager.keyword_categories:
+                print("可用分類:", ', '.join(manager.keyword_categories.keys()))
+                category = input("請輸入分類 (可選，直接按 Enter 跳過): ").strip()
+                category = category if category else None
+            else:
+                category = None
             
             if os.path.exists(filename):
                 try:
@@ -461,7 +481,7 @@ def interactive_menu():
             manager.export_keywords(filename)
             
         elif choice == '8':
-            print("來源選項:")
+            print("\n來源選項:")
             print("1. CN_MSA (中國海事局)")
             print("2. TW_MPB (台灣航港局)")
             source_choice = input("請選擇來源 (1-2): ").strip()
@@ -477,9 +497,21 @@ def interactive_menu():
             
         elif choice == '9':
             category = input("請輸入新分類名稱: ").strip()
-            manager.add_category(category)
-            
+            if category:
+                manager.add_category(category)
+            else:
+                print("❌ 分類名稱不能為空")
+        
         elif choice == '10':
+            if manager.keyword_categories:
+                print("現有分類:", ', '.join(manager.keyword_categories.keys()))
+                category = input("請輸入要移除的分類名稱: ").strip()
+                if category:
+                    manager.remove_category(category)
+            else:
+                print("⚠️ 目前沒有任何分類")
+            
+        elif choice == '11':
             stats = manager.get_statistics()
             print(f"\n📊 關鍵字統計資訊:")
             print(f"總關鍵字數: {stats['total']}")
@@ -487,18 +519,18 @@ def interactive_menu():
             print(f"🇹🇼 繁體中文: {stats['chinese_traditional']}")
             print(f"🇨🇳 簡體中文: {stats['chinese_simplified']}")
             print(f"🌐 英文: {stats['english']}")
-            print(f"\n各分類統計:")
-            for cat, count in stats['by_category'].items():
-                print(f"  {cat}: {count}")
-            
-        elif choice == '11':
-            confirm = input("確定要重設為預設關鍵字嗎？(y/n): ").strip().lower()
-            if confirm == 'y':
-                manager.set_default_keywords()
-                print("✅ 已重設為預設關鍵字")
+            if stats['by_category']:
+                print(f"\n各分類統計:")
+                for cat, count in stats['by_category'].items():
+                    print(f"  {cat}: {count}")
             
         elif choice == '12':
-            confirm = input("確定要清空所有關鍵字嗎？(y/n): ").strip().lower()
+            confirm = input("⚠️  確定要重設為預設關鍵字嗎？(y/n): ").strip().lower()
+            if confirm == 'y':
+                manager.set_default_keywords()
+            
+        elif choice == '13':
+            confirm = input("⚠️  確定要清空所有關鍵字嗎？此操作無法復原！(y/n): ").strip().lower()
             if confirm == 'y':
                 manager.clear_keywords()
             
@@ -512,5 +544,3 @@ def interactive_menu():
 
 if __name__ == "__main__":
     interactive_menu()
-
-
