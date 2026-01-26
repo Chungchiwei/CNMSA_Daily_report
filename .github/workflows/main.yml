@@ -2,7 +2,7 @@ name: Multi-Source Maritime Warning Monitor
 
 on:
   schedule:
-    - cron: '0 */12 * * *'  # 每12小時執行一次 (UTC時間)
+    - cron: '0 */6 * * *'  # 每6小時執行一次 (UTC時間)
   workflow_dispatch:  # 允許手動觸發
     inputs:
       debug_mode:
