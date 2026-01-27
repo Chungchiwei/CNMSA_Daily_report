@@ -430,8 +430,8 @@ class UnifiedTeamsNotifier:
 class GmailRelayNotifier:
     """Gmail SMTP 郵件通知系統"""
     def __init__(self, mail_user, mail_pass, target_email):
-        self.mail_user = "harry810403@gmail.com"
-        self.mail_pass = "gezvuqtlpreffnmi"
+        self.mail_user = mail_user
+        self.mail_pass = mail_pass
         self.target_email = target_email
         self.smtp_server = "smtp.gmail.com"
         self.smtp_port = 587
@@ -1374,4 +1374,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ 執行失敗: {e}")
         traceback.print_exc()
-
