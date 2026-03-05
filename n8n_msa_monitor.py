@@ -359,130 +359,574 @@ class GmailRelayNotifier:
 
     def _generate_html_report(self, today_warnings, history_warnings):
         total_count = len(today_warnings) + len(history_warnings)
-        html = f"""
-        <html><head><meta charset="utf-8">
-        <style>
-            body {{ font-family: 'Microsoft JhengHei', Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
-            .container {{ max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-            h1 {{ color: #003366; border-bottom: 3px solid #0066cc; padding-bottom: 10px; }}
-            h2 {{ color: #0066cc; margin-top: 30px; padding: 10px; background: #f0f8ff; border-left: 4px solid #0066cc; }}
-            .summary {{ background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-            .summary-item {{ display: inline-block; margin: 5px 15px 5px 0; font-weight: bold; }}
-            .warning-item {{ background: #f9f9f9; padding: 15px; margin: 15px 0; border-left: 4px solid #0066cc; border-radius: 5px; }}
-            .warning-item.today {{ border-left-color: #ff6b6b; background: #fff5f5; }}
-            .warning-item.history {{ border-left-color: #51cf66; background: #f0fff4; }}
-            .warning-title {{ font-weight: bold; color: #003366; font-size: 16px; }}
-            .warning-meta {{ color: #666; font-size: 14px; margin-top: 5px; line-height: 1.8; }}
-            .coordinates {{ background: #e8f4fd; padding: 12px; margin-top: 10px; border-radius: 5px;
-                            font-family: 'Courier New', monospace; font-size: 13px; border: 1px solid #bee3f8; }}
-            .coord-source-label {{ font-weight: bold; color: #2b6cb0; margin-bottom: 6px; }}
-            .coord-item {{ margin: 4px 0; color: #2d3748; }}
-            .coord-map-link {{ font-size: 12px; color: #3182ce; text-decoration: none; margin-left: 8px; }}
-            .details-block {{background: #fffbea;border: 1px solid #f6e05e;border-left: 4px solid #d69e2e;padding: 10px 14px;margin-top: 10px;border-radius: 5px;font-size: 14px;color: #2d3748;line-height: 1.7;}}
-            .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 12px; text-align: center; }}
-            .badge {{ display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; margin-left: 10px; }}
-            .badge.today {{ background: #ff6b6b; color: white; }}
-            .badge.history {{ background: #51cf66; color: white; }}
-            .source-tag {{ display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px;
-                           background: #6c5ce7; color: white; margin-left: 6px; }}
-        </style>
-        </head>
-        <body>
-        <div class="container">
-            <h1>🌊 WHL_FRM海事警告監控報告</h1>
-            <div class="summary">
-                <div class="summary-item">📅 報告時間：{(datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')} (TPE)</div><br>
-                <div class="summary-item">📊 總警告數：{total_count} 筆</div>
-                <div class="summary-item">🆕 今日新增：{len(today_warnings)} 筆</div>
-                <div class="summary-item">📚 歷史資料：{len(history_warnings)} 筆</div>
+        tpe_now     = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+
+        # ── 各來源統計 ──
+        cn_today   = len([w for w in today_warnings   if w.get('source') == 'CN_MSA'])
+        tw_today   = len([w for w in today_warnings   if w.get('source') == 'TW_MPB'])
+        uk_today   = len([w for w in today_warnings   if w.get('source') == 'UKMTO'])
+        cn_history = len([w for w in history_warnings if w.get('source') == 'CN_MSA'])
+        tw_history = len([w for w in history_warnings if w.get('source') == 'TW_MPB'])
+        uk_history = len([w for w in history_warnings if w.get('source') == 'UKMTO'])
+        cn_total   = cn_today + cn_history
+        tw_total   = tw_today + tw_history
+        uk_total   = uk_today + uk_history
+
+        # ── 座標統計 ──
+        cn_coords  = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'CN_MSA')
+        tw_coords  = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'TW_MPB')
+        uk_coords  = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'UKMTO')
+        total_coords = cn_coords + tw_coords + uk_coords
+
+        def _bar(value, max_val, color):
+            """產生視覺化進度條 HTML"""
+            if max_val == 0:
+                pct = 0
+            else:
+                pct = min(100, round(value / max_val * 100))
+            return f'<div style="background:#e9ecef;border-radius:4px;height:8px;margin-top:5px;overflow:hidden;"><div style="width:{pct}%;background:{color};height:100%;border-radius:4px;transition:width 0.3s;"></div></div>'
+
+        max_total = max(cn_total, tw_total, uk_total, 1)
+
+        html = f"""<!DOCTYPE html>
+    <html lang="zh-TW">
+    <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>航行警告監控報告</title>
+    <style>
+    /* ── 基礎 ── */
+    body {{
+        font-family: 'Microsoft JhengHei', 'Segoe UI', Arial, sans-serif;
+        margin: 0; padding: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+    }}
+    .container {{
+        max-width: 1000px; margin: 0 auto;
+        background: #ffffff; padding: 0;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        overflow: hidden;
+    }}
+
+    /* ── 頂部 Banner ── */
+    .header-banner {{
+        background: linear-gradient(135deg, #003366 0%, #0066cc 100%);
+        padding: 30px 35px 25px;
+        color: white;
+    }}
+    .header-banner h1 {{
+        margin: 0 0 6px 0;
+        font-size: 24px; font-weight: 700;
+        letter-spacing: 1px;
+    }}
+    .header-time {{
+        font-size: 13px; opacity: 0.85; margin: 0;
+    }}
+
+    /* ── 今日新增醒目橫幅 ── */
+    .today-banner {{
+        background: linear-gradient(90deg, #c0392b 0%, #e74c3c 50%, #c0392b 100%);
+        padding: 14px 35px;
+        display: flex; align-items: center; gap: 12px;
+    }}
+    .today-banner-text {{
+        color: white; font-size: 18px; font-weight: 700; letter-spacing: 0.5px;
+    }}
+    .new-pulse-badge {{
+        background: white; color: #c0392b;
+        font-size: 11px; font-weight: 900;
+        padding: 3px 8px; border-radius: 20px; letter-spacing: 1px;
+    }}
+
+    /* ── 快速統計卡片 ── */
+    .summary-grid {{
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0;
+        border-bottom: 3px solid #e9ecef;
+    }}
+    .stat-card {{
+        padding: 20px 15px; text-align: center;
+        border-right: 1px solid #e9ecef;
+    }}
+    .stat-card:last-child {{ border-right: none; }}
+    .stat-card.highlight {{ background: linear-gradient(135deg, #fff5f5, #ffe0e0); }}
+    .stat-number        {{ font-size: 36px; font-weight: 900; line-height: 1; margin-bottom: 4px; }}
+    .stat-number.red    {{ color: #e74c3c; }}
+    .stat-number.blue   {{ color: #0066cc; }}
+    .stat-number.gray   {{ color: #6c757d; }}
+    .stat-label         {{ font-size: 12px; color: #6c757d; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }}
+    .stat-sub           {{ font-size: 11px; color: #adb5bd; margin-top: 4px; }}
+
+    /* ══════════════════════════════════════
+        ★ 來源統計總覽表（新增核心區塊）
+    ══════════════════════════════════════ */
+    .source-overview {{
+        margin: 0;
+        padding: 28px 35px 24px;
+        background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+        border-bottom: 3px solid #e9ecef;
+    }}
+    .source-overview-title {{
+        font-size: 15px; font-weight: 700; color: #2d3748;
+        margin: 0 0 18px 0;
+        display: flex; align-items: center; gap: 8px;
+    }}
+    .source-overview-title::after {{
+        content: ''; flex: 1;
+        height: 2px;
+        background: linear-gradient(90deg, #0066cc, transparent);
+        margin-left: 10px;
+    }}
+
+    /* 表格本體 */
+    .overview-table {{
+        width: 100%; border-collapse: separate; border-spacing: 0;
+        border-radius: 10px; overflow: hidden;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        font-size: 14px;
+    }}
+    .overview-table thead tr {{
+        background: linear-gradient(90deg, #003366, #0066cc);
+        color: white;
+    }}
+    .overview-table thead th {{
+        padding: 12px 16px; text-align: center;
+        font-weight: 700; font-size: 13px;
+        letter-spacing: 0.5px;
+        border: none;
+    }}
+    .overview-table thead th:first-child {{ text-align: left; padding-left: 20px; }}
+
+    /* 資料列 */
+    .overview-table tbody tr {{
+        border-bottom: 1px solid #e9ecef;
+        transition: background 0.15s;
+    }}
+    .overview-table tbody tr:last-child {{ border-bottom: none; }}
+    .overview-table tbody tr:hover {{ background: #f0f7ff; }}
+    .overview-table tbody tr.row-cn {{ background: #fffaf0; }}
+    .overview-table tbody tr.row-cn:hover {{ background: #fff3cd; }}
+    .overview-table tbody tr.row-tw {{ background: #f0fff4; }}
+    .overview-table tbody tr.row-tw:hover {{ background: #d4edda; }}
+    .overview-table tbody tr.row-uk {{ background: #f0f4ff; }}
+    .overview-table tbody tr.row-uk:hover {{ background: #d6e4ff; }}
+    .overview-table tbody tr.row-total {{
+        background: linear-gradient(90deg, #f8f9fa, #e9ecef);
+        font-weight: 700;
+        border-top: 2px solid #dee2e6;
+    }}
+
+    .overview-table td {{
+        padding: 13px 16px; text-align: center;
+        vertical-align: middle; border: none;
+    }}
+    .overview-table td:first-child {{ text-align: left; padding-left: 20px; }}
+
+    /* 來源名稱欄 */
+    .source-name {{
+        display: flex; align-items: center; gap: 10px;
+    }}
+    .source-flag {{ font-size: 22px; line-height: 1; }}
+    .source-info {{ display: flex; flex-direction: column; }}
+    .source-main {{ font-weight: 700; color: #2d3748; font-size: 14px; }}
+    .source-sub  {{ font-size: 11px; color: #718096; margin-top: 1px; }}
+
+    /* 數字徽章 */
+    .num-badge {{
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 32px; height: 28px;
+        border-radius: 6px; font-weight: 700; font-size: 15px;
+        padding: 0 8px;
+    }}
+    .num-badge.new  {{ background: #fff0f0; color: #e74c3c; border: 1.5px solid #f5c6cb; }}
+    .num-badge.hist {{ background: #f0fff4; color: #27ae60; border: 1.5px solid #c3e6cb; }}
+    .num-badge.tot  {{ background: #e8f0fe; color: #0066cc; border: 1.5px solid #b8d0f8; font-size: 16px; }}
+    .num-badge.zero {{ background: #f8f9fa; color: #adb5bd; border: 1.5px solid #dee2e6; }}
+    .num-badge.coord {{ background: #fff8e1; color: #d69e2e; border: 1.5px solid #fde68a; font-size: 13px; }}
+
+    /* 進度條欄 */
+    .bar-cell {{ min-width: 120px; }}
+
+    /* 合計列特殊樣式 */
+    .total-label {{
+        font-weight: 800; color: #2d3748; font-size: 14px;
+        display: flex; align-items: center; gap: 8px;
+    }}
+
+    /* ── 內容區 ── */
+    .content-area {{ padding: 25px 35px; }}
+
+    /* ── 區段標題 ── */
+    .section-header-today {{
+        display: flex; align-items: center; gap: 12px;
+        background: linear-gradient(90deg, #fff0f0, #ffffff);
+        border-left: 5px solid #e74c3c;
+        padding: 12px 18px; margin: 0 0 20px 0;
+        border-radius: 0 8px 8px 0;
+    }}
+    .section-header-history {{
+        display: flex; align-items: center; gap: 12px;
+        background: linear-gradient(90deg, #f0f8f0, #ffffff);
+        border-left: 5px solid #27ae60;
+        padding: 12px 18px; margin: 25px 0 20px 0;
+        border-radius: 0 8px 8px 0;
+    }}
+    .section-title {{ font-size: 17px; font-weight: 700; color: #2d3748; margin: 0; }}
+    .section-count {{ margin-left: auto; font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }}
+    .section-count.today-count   {{ background: #e74c3c; color: white; }}
+    .section-count.history-count {{ background: #27ae60; color: white; }}
+
+    /* ── 警告卡片：今日 ── */
+    .warning-card-today {{
+        background: #ffffff; border: 2px solid #e74c3c;
+        border-radius: 10px; margin-bottom: 16px; overflow: hidden;
+        box-shadow: 0 4px 15px rgba(231,76,60,0.15);
+    }}
+    .card-header-today {{
+        background: linear-gradient(90deg, #e74c3c, #c0392b);
+        padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+    }}
+    .card-index-today {{
+        background: white; color: #e74c3c; font-size: 13px; font-weight: 900;
+        width: 26px; height: 26px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }}
+    .card-title-today  {{ color: white; font-size: 14px; font-weight: 700; flex: 1; line-height: 1.4; }}
+    .new-tag {{
+        background: #fff3cd; color: #856404; font-size: 10px; font-weight: 900;
+        padding: 2px 7px; border-radius: 3px; letter-spacing: 1px; flex-shrink: 0;
+    }}
+
+    /* ── 警告卡片：歷史 ── */
+    .warning-card-history {{
+        background: #fafafa; border: 1px solid #dee2e6;
+        border-left: 4px solid #27ae60; border-radius: 8px;
+        margin-bottom: 12px; overflow: hidden; opacity: 0.9;
+    }}
+    .card-header-history {{
+        background: #f8f9fa; padding: 10px 16px;
+        display: flex; align-items: center; gap: 10px;
+        border-bottom: 1px solid #e9ecef;
+    }}
+    .card-index-history {{
+        background: #6c757d; color: white; font-size: 12px; font-weight: 700;
+        width: 22px; height: 22px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }}
+    .card-title-history {{ color: #495057; font-size: 14px; font-weight: 600; flex: 1; line-height: 1.4; }}
+
+    /* ── 卡片內容 ── */
+    .card-body {{ padding: 12px 16px; }}
+    .meta-row  {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }}
+    .meta-chip {{ font-size: 12px; padding: 3px 8px; border-radius: 4px; background: #e9ecef; color: #495057; }}
+    .meta-chip.time         {{ background: #e3f2fd; color: #1565c0; }}
+    .meta-chip.unit         {{ background: #f3e5f5; color: #6a1b9a; }}
+    .meta-chip.kw           {{ background: #e8f5e9; color: #2e7d32; }}
+    .meta-chip.level-red    {{ background: #ffebee; color: #c62828; }}
+    .meta-chip.level-yellow {{ background: #fff8e1; color: #f57f17; }}
+
+    /* ── 通告內容 ── */
+    .details-block {{
+        background: #fffbea; border: 1px solid #f6e05e;
+        border-left: 4px solid #d69e2e; padding: 10px 14px;
+        margin: 10px 0; border-radius: 5px;
+        font-size: 13px; color: #2d3748; line-height: 1.7;
+    }}
+
+    /* ── 座標 ── */
+    .coordinates {{
+        background: #e8f4fd; border: 1px solid #bee3f8;
+        border-radius: 6px; padding: 10px 14px; margin-top: 8px;
+        font-family: 'Courier New', monospace; font-size: 12px;
+    }}
+    .coord-source-label {{ font-weight: 700; color: #2b6cb0; margin-bottom: 6px; font-family: inherit; font-size: 12px; }}
+    .coord-item         {{ margin: 4px 0; color: #2d3748; }}
+    .coord-map-link     {{ font-size: 11px; color: #3182ce; text-decoration: none; margin-left: 8px; }}
+
+    /* ── 其他 ── */
+    .source-tag  {{ display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; background: #6c5ce7; color: white; margin-left: 6px; vertical-align: middle; }}
+    .view-link   {{ display: inline-block; margin-top: 8px; font-size: 13px; color: #3182ce; text-decoration: none; font-weight: 600; }}
+    .divider     {{ border: none; border-top: 2px dashed #e9ecef; margin: 25px 0; }}
+
+    /* ── 頁尾 ── */
+    .footer {{
+        background: #f8f9fa; border-top: 2px solid #e9ecef;
+        padding: 20px 35px; text-align: center;
+        color: #6c757d; font-size: 12px; line-height: 1.8;
+    }}
+    </style>
+    </head>
+    <body>
+    <div class="container">
+
+    <!-- ══ 頂部 Banner ══ -->
+    <div class="header-banner">
+        <h1>🌊 WHL_FRM 海事警告監控報告</h1>
+        <p class="header-time">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.1</p>
+    </div>
+
+    <!-- ══ 今日新增醒目橫幅 ══ -->
+    {'<div class="today-banner"><span class="today-banner-text">🚨 今日發現 ' + str(len(today_warnings)) + ' 筆新增航行警告</span><span class="new-pulse-badge">NEW</span></div>' if today_warnings else ''}
+
+    <!-- ══ 快速統計卡片 ══ -->
+    <div class="summary-grid">
+        <div class="stat-card {'highlight' if today_warnings else ''}">
+        <div class="stat-number red">{len(today_warnings)}</div>
+        <div class="stat-label">今日新增</div>
+        <div class="stat-sub">⚠️ 需重點關注</div>
+        </div>
+        <div class="stat-card">
+        <div class="stat-number gray">{len(history_warnings)}</div>
+        <div class="stat-label">歷史資料</div>
+        <div class="stat-sub">近期累積</div>
+        </div>
+        <div class="stat-card">
+        <div class="stat-number blue">{total_count}</div>
+        <div class="stat-label">本次總計</div>
+        <div class="stat-sub">所有來源</div>
+        </div>
+        <div class="stat-card">
+        <div class="stat-number blue" style="font-size:28px;padding-top:4px;">
+            {total_coords}
+        </div>
+        <div class="stat-label">座標點數</div>
+        <div class="stat-sub">📍 已定位</div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════
+        ★ 來源統計總覽表（核心新增區塊）
+    ══════════════════════════════════════════ -->
+    <div class="source-overview">
+        <p class="source-overview-title">📊 各來源警告統計總覽</p>
+
+        <table class="overview-table">
+        <thead>
+            <tr>
+            <th style="width:28%;">資料來源</th>
+            <th style="width:14%;">🆕 今日新增</th>
+            <th style="width:14%;">📚 歷史資料</th>
+            <th style="width:14%;">📊 小計</th>
+            <th style="width:14%;">📍 座標點</th>
+            <th style="width:16%;">佔比</th>
+            </tr>
+        </thead>
+        <tbody>
+
+            <!-- 中國海事局 -->
+            <tr class="row-cn">
+            <td>
+                <div class="source-name">
+                <span class="source-flag">🇨🇳</span>
+                <div class="source-info">
+                    <span class="source-main">中國海事局</span>
+                    <span class="source-sub">China MSA</span>
+                </div>
+                </div>
+            </td>
+            <td><span class="num-badge {'new' if cn_today > 0 else 'zero'}">{cn_today}</span></td>
+            <td><span class="num-badge {'hist' if cn_history > 0 else 'zero'}">{cn_history}</span></td>
+            <td><span class="num-badge {'tot' if cn_total > 0 else 'zero'}">{cn_total}</span></td>
+            <td><span class="num-badge {'coord' if cn_coords > 0 else 'zero'}">{cn_coords}</span></td>
+            <td class="bar-cell">
+                {_bar(cn_total, max_total, '#e67e22')}
+                <span style="font-size:11px;color:#718096;">{round(cn_total/max(total_count,1)*100)}%</span>
+            </td>
+            </tr>
+
+            <!-- 台灣航港局 -->
+            <tr class="row-tw">
+            <td>
+                <div class="source-name">
+                <span class="source-flag">🇹🇼</span>
+                <div class="source-info">
+                    <span class="source-main">台灣航港局</span>
+                    <span class="source-sub">Taiwan MOTCMPB</span>
+                </div>
+                </div>
+            </td>
+            <td><span class="num-badge {'new' if tw_today > 0 else 'zero'}">{tw_today}</span></td>
+            <td><span class="num-badge {'hist' if tw_history > 0 else 'zero'}">{tw_history}</span></td>
+            <td><span class="num-badge {'tot' if tw_total > 0 else 'zero'}">{tw_total}</span></td>
+            <td><span class="num-badge {'coord' if tw_coords > 0 else 'zero'}">{tw_coords}</span></td>
+            <td class="bar-cell">
+                {_bar(tw_total, max_total, '#27ae60')}
+                <span style="font-size:11px;color:#718096;">{round(tw_total/max(total_count,1)*100)}%</span>
+            </td>
+            </tr>
+
+            <!-- UKMTO -->
+            <tr class="row-uk">
+            <td>
+                <div class="source-name">
+                <span class="source-flag">🇬🇧</span>
+                <div class="source-info">
+                    <span class="source-main">UKMTO</span>
+                    <span class="source-sub">UK Maritime Trade Ops</span>
+                </div>
+                </div>
+            </td>
+            <td><span class="num-badge {'new' if uk_today > 0 else 'zero'}">{uk_today}</span></td>
+            <td><span class="num-badge {'hist' if uk_history > 0 else 'zero'}">{uk_history}</span></td>
+            <td><span class="num-badge {'tot' if uk_total > 0 else 'zero'}">{uk_total}</span></td>
+            <td><span class="num-badge {'coord' if uk_coords > 0 else 'zero'}">{uk_coords}</span></td>
+            <td class="bar-cell">
+                {_bar(uk_total, max_total, '#0066cc')}
+                <span style="font-size:11px;color:#718096;">{round(uk_total/max(total_count,1)*100)}%</span>
+            </td>
+            </tr>
+
+            <!-- 合計列 -->
+            <tr class="row-total">
+            <td>
+                <span class="total-label">📈 合計</span>
+            </td>
+            <td><span class="num-badge new">{len(today_warnings)}</span></td>
+            <td><span class="num-badge hist">{len(history_warnings)}</span></td>
+            <td><span class="num-badge tot">{total_count}</span></td>
+            <td><span class="num-badge coord">{total_coords}</span></td>
+            <td><span style="font-size:13px;font-weight:700;color:#2d3748;">100%</span></td>
+            </tr>
+
+        </tbody>
+        </table>
+    </div>
+    <!-- ══ 來源統計總覽表 結束 ══ -->
+
+    <!-- ══ 主要內容 ══ -->
+    <div class="content-area">
+    """
+
+            # ── 渲染函式 ──
+            def _render_warnings(warnings_list, is_today):
+                result = ""
+                for idx, w in enumerate(warnings_list, 1):
+                    source = w.get('source', '')
+                    icon   = self._source_icon(source)
+                    coords = w.get('coordinates', [])
+
+                    # 座標區塊
+                    coord_html = ""
+                    if coords:
+                        coord_source = w.get('coord_source', 'text')
+                        source_label_map = {
+                            'next_data': '📡 來源：__NEXT_DATA__ (精確)',
+                            'text':      '📝 來源：文字解析',
+                            'fallback':  '🔄 來源：Fallback 解析',
+                        }
+                        source_label = source_label_map.get(coord_source, '📍 座標資訊')
+                        coord_html   = f'<div class="coordinates"><div class="coord-source-label">{source_label}</div>'
+                        for i, pt in enumerate(coords, 1):
+                            lat, lon = pt[0], pt[1]
+                            lat_dir  = 'N' if lat >= 0 else 'S'
+                            lon_dir  = 'E' if lon >= 0 else 'W'
+                            maps_url = f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
+                            coord_html += (
+                                f'<div class="coord-item">'
+                                f'📍 {i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}'
+                                f'<a class="coord-map-link" href="{maps_url}" target="_blank">🗺️ 地圖</a>'
+                                f'</div>'
+                            )
+                        coord_html += '</div>'
+
+                    # UKMTO 警示等級
+                    level_chip = ""
+                    if source == "UKMTO":
+                        colour      = w.get('colour', '')
+                        colour_icon = "🔴" if colour == "Red" else "🟡"
+                        level_class = "level-red" if colour == "Red" else "level-yellow"
+                        level_chip  = f'<span class="meta-chip {level_class}">{colour_icon} {colour}</span>'
+
+                    # UKMTO 通告內容
+                    details_html = ""
+                    if source == "UKMTO" and w.get('details'):
+                        details_html = f'<div class="details-block"><strong>📄 通告內容：</strong><br>{w["details"]}</div>'
+
+                    kw     = w.get('keywords', [])
+                    kw_str = ', '.join(kw) if isinstance(kw, list) else str(kw)
+
+                    if is_today:
+                        result += f"""
+        <div class="warning-card-today">
+        <div class="card-header-today">
+            <div class="card-index-today">{idx}</div>
+            <div class="card-title-today">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
+            <span class="new-tag">NEW</span>
+        </div>
+        <div class="card-body">
+            <div class="meta-row">
+            <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
+            <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
+            <span class="meta-chip kw">🔑 {kw_str}</span>
+            {level_chip}
             </div>
-        """
+            {details_html}
+            {coord_html}
+            <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
+        </div>
+        </div>"""
+                    else:
+                        result += f"""
+        <div class="warning-card-history">
+        <div class="card-header-history">
+            <div class="card-index-history">{idx}</div>
+            <div class="card-title-history">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
+        </div>
+        <div class="card-body">
+            <div class="meta-row">
+            <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
+            <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
+            <span class="meta-chip kw">🔑 {kw_str}</span>
+            {level_chip}
+            </div>
+            {details_html}
+            {coord_html}
+            <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
+        </div>
+        </div>"""
+                return result
 
-        def _render_warnings(warnings_list, badge_class, badge_label):
-            result = ""
-            for idx, w in enumerate(warnings_list, 1):
-                source = w.get('source', '')
-                icon   = self._source_icon(source)
-                coords = w.get('coordinates', [])
+            # ── 今日新增區段 ──
+            if today_warnings:
+                html += f"""
+        <div class="section-header-today">
+        <span style="font-size:20px;">🚨</span>
+        <h2 class="section-title">今日新增航行警告</h2>
+        <span class="section-count today-count">{len(today_warnings)} 筆</span>
+        </div>
+    """
+                html += _render_warnings(today_warnings, is_today=True)
 
-                # ── 座標區塊 ──
-                coord_html = ""
-                if coords:
-                    coord_source  = w.get('coord_source', 'text')
-                    source_label_map = {
-                        'next_data': '📡 來源：__NEXT_DATA__ (精確)',
-                        'text':      '📝 來源：文字解析',
-                        'fallback':  '🔄 來源：Fallback 解析',
-                    }
-                    source_label = source_label_map.get(coord_source, '📍 座標資訊')
-                    coord_html   = f'<div class="coordinates"><div class="coord-source-label">{source_label}</div>'
-                    for i, pt in enumerate(coords, 1):
-                        lat, lon = pt[0], pt[1]
-                        lat_dir  = 'N' if lat >= 0 else 'S'
-                        lon_dir  = 'E' if lon >= 0 else 'W'
-                        maps_url = f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
-                        coord_html += (
-                            f'<div class="coord-item">'
-                            f'{i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}'
-                            f'<a class="coord-map-link" href="{maps_url}" target="_blank">🗺️ 地圖</a>'
-                            f'</div>'
-                        )
-                    coord_html += '</div>'
+            if today_warnings and history_warnings:
+                html += '<hr class="divider">'
 
-                # ── UKMTO 特有欄位 ──
-                extra_meta = ""
-                if source == "UKMTO":
-                    colour      = w.get('colour', '')
-                    colour_icon = "🔴" if colour == "Red" else "🟡"
-                    extra_meta  = f"⚠️ 警示等級：{colour_icon} {colour}<br>"
+            # ── 歷史資料區段 ──
+            if history_warnings:
+                html += f"""
+        <div class="section-header-history">
+        <span style="font-size:20px;">📚</span>
+        <h2 class="section-title">過往航行警告（歷史資料）</h2>
+        <span class="section-count history-count">{len(history_warnings)} 筆</span>
+        </div>
+    """
+                html += _render_warnings(history_warnings, is_today=False)
 
-                # ── UKMTO 完整通告內容 ──
-                details_html = ""
-                if source == "UKMTO" and w.get('details'):
-                    details_html = f"""
-                        <div class="details-block">
-                            <strong>📄 通告內容：</strong><br>
-                            {w['details']}
-                        </div>
-                    """
+            html += """
+    </div><!-- /content-area -->
 
-                kw     = w.get('keywords', [])
-                kw_str = ', '.join(kw) if isinstance(kw, list) else str(kw)
+    <div class="footer">
+        <p>⚠️ 此為自動發送的郵件，請勿直接回覆</p>
+        <p>航行警告監控系統 v3.1 &nbsp;|&nbsp; Navigation Warning Monitor System</p>
+    </div>
 
-                result += f"""
-                    <div class="warning-item {badge_class}">
-                        <div class="warning-title">
-                            {icon} {idx}. {w.get('title', 'N/A')}
-                            <span class="badge {badge_class}">{badge_label}</span>
-                            {'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}
-                        </div>
-                        <div class="warning-meta">
-                            📋 發布單位：{w.get('bureau', 'N/A')}<br>
-                            📅 發布時間：{w.get('time', 'N/A')}<br>
-                            {extra_meta}
-                            🔑 關鍵字：{kw_str}<br>
-                            🔗 <a href="{w.get('link', '#')}">查看詳情</a>
-                        </div>
-                        {details_html}
-                        {coord_html}
-                    </div>
-                """
-            return result
+    </div><!-- /container -->
+    </body>
+    </html>"""
+            return html
 
-        if today_warnings:
-            html += f"<h2>🆕 今日新增航行警告 ({len(today_warnings)} 筆)</h2>"
-            html += _render_warnings(today_warnings, "today", "今日")
-        if history_warnings:
-            html += f"<h2>📚 過往航行警告 ({len(history_warnings)} 筆)</h2>"
-            html += _render_warnings(history_warnings, "history", "歷史")
-
-        html += """
-            <div class="footer">
-                <p>此為自動發送的郵件，請勿直接回覆</p>
-                <p>航行警告監控系統 v3.1 | Navigation Warning Monitor System</p>
-            </div></div></body></html>
-        """
-        return html
 
 
 # ==================== 5. UKMTO 爬蟲 (v3.1 - 座標從 __NEXT_DATA__ 讀取) ====================
