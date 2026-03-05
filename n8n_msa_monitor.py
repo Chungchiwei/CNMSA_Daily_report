@@ -801,131 +801,131 @@ class GmailRelayNotifier:
     """
 
             # ── 渲染函式 ──
-            def _render_warnings(warnings_list, is_today):
-                result = ""
-                for idx, w in enumerate(warnings_list, 1):
-                    source = w.get('source', '')
-                    icon   = self._source_icon(source)
-                    coords = w.get('coordinates', [])
+        def _render_warnings(warnings_list, is_today):
+            result = ""
+            for idx, w in enumerate(warnings_list, 1):
+                source = w.get('source', '')
+                icon   = self._source_icon(source)
+                coords = w.get('coordinates', [])
 
-                    # 座標區塊
-                    coord_html = ""
-                    if coords:
-                        coord_source = w.get('coord_source', 'text')
-                        source_label_map = {
-                            'next_data': '📡 來源：__NEXT_DATA__ (精確)',
-                            'text':      '📝 來源：文字解析',
-                            'fallback':  '🔄 來源：Fallback 解析',
-                        }
-                        source_label = source_label_map.get(coord_source, '📍 座標資訊')
-                        coord_html   = f'<div class="coordinates"><div class="coord-source-label">{source_label}</div>'
-                        for i, pt in enumerate(coords, 1):
-                            lat, lon = pt[0], pt[1]
-                            lat_dir  = 'N' if lat >= 0 else 'S'
-                            lon_dir  = 'E' if lon >= 0 else 'W'
-                            maps_url = f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
-                            coord_html += (
-                                f'<div class="coord-item">'
-                                f'📍 {i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}'
-                                f'<a class="coord-map-link" href="{maps_url}" target="_blank">🗺️ 地圖</a>'
-                                f'</div>'
-                            )
-                        coord_html += '</div>'
+                # 座標區塊
+                coord_html = ""
+                if coords:
+                    coord_source = w.get('coord_source', 'text')
+                    source_label_map = {
+                        'next_data': '📡 來源：__NEXT_DATA__ (精確)',
+                        'text':      '📝 來源：文字解析',
+                        'fallback':  '🔄 來源：Fallback 解析',
+                    }
+                    source_label = source_label_map.get(coord_source, '📍 座標資訊')
+                    coord_html   = f'<div class="coordinates"><div class="coord-source-label">{source_label}</div>'
+                    for i, pt in enumerate(coords, 1):
+                        lat, lon = pt[0], pt[1]
+                        lat_dir  = 'N' if lat >= 0 else 'S'
+                        lon_dir  = 'E' if lon >= 0 else 'W'
+                        maps_url = f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
+                        coord_html += (
+                            f'<div class="coord-item">'
+                            f'📍 {i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}'
+                            f'<a class="coord-map-link" href="{maps_url}" target="_blank">🗺️ 地圖</a>'
+                            f'</div>'
+                        )
+                    coord_html += '</div>'
 
-                    # UKMTO 警示等級
-                    level_chip = ""
-                    if source == "UKMTO":
-                        colour      = w.get('colour', '')
-                        colour_icon = "🔴" if colour == "Red" else "🟡"
-                        level_class = "level-red" if colour == "Red" else "level-yellow"
-                        level_chip  = f'<span class="meta-chip {level_class}">{colour_icon} {colour}</span>'
+                # UKMTO 警示等級
+                level_chip = ""
+                if source == "UKMTO":
+                    colour      = w.get('colour', '')
+                    colour_icon = "🔴" if colour == "Red" else "🟡"
+                    level_class = "level-red" if colour == "Red" else "level-yellow"
+                    level_chip  = f'<span class="meta-chip {level_class}">{colour_icon} {colour}</span>'
 
-                    # UKMTO 通告內容
-                    details_html = ""
-                    if source == "UKMTO" and w.get('details'):
-                        details_html = f'<div class="details-block"><strong>📄 通告內容：</strong><br>{w["details"]}</div>'
+                # UKMTO 通告內容
+                details_html = ""
+                if source == "UKMTO" and w.get('details'):
+                    details_html = f'<div class="details-block"><strong>📄 通告內容：</strong><br>{w["details"]}</div>'
 
-                    kw     = w.get('keywords', [])
-                    kw_str = ', '.join(kw) if isinstance(kw, list) else str(kw)
+                kw     = w.get('keywords', [])
+                kw_str = ', '.join(kw) if isinstance(kw, list) else str(kw)
 
-                    if is_today:
-                        result += f"""
-        <div class="warning-card-today">
-        <div class="card-header-today">
-            <div class="card-index-today">{idx}</div>
-            <div class="card-title-today">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
-            <span class="new-tag">NEW</span>
-        </div>
-        <div class="card-body">
-            <div class="meta-row">
-            <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
-            <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
-            <span class="meta-chip kw">🔑 {kw_str}</span>
-            {level_chip}
-            </div>
-            {details_html}
-            {coord_html}
-            <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
-        </div>
-        </div>"""
-                    else:
-                        result += f"""
-        <div class="warning-card-history">
-        <div class="card-header-history">
-            <div class="card-index-history">{idx}</div>
-            <div class="card-title-history">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
-        </div>
-        <div class="card-body">
-            <div class="meta-row">
-            <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
-            <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
-            <span class="meta-chip kw">🔑 {kw_str}</span>
-            {level_chip}
-            </div>
-            {details_html}
-            {coord_html}
-            <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
-        </div>
-        </div>"""
-                return result
-
-            # ── 今日新增區段 ──
-            if today_warnings:
-                html += f"""
-        <div class="section-header-today">
-        <span style="font-size:20px;">🚨</span>
-        <h2 class="section-title">今日新增航行警告</h2>
-        <span class="section-count today-count">{len(today_warnings)} 筆</span>
-        </div>
-    """
-                html += _render_warnings(today_warnings, is_today=True)
-
-            if today_warnings and history_warnings:
-                html += '<hr class="divider">'
-
-            # ── 歷史資料區段 ──
-            if history_warnings:
-                html += f"""
-        <div class="section-header-history">
-        <span style="font-size:20px;">📚</span>
-        <h2 class="section-title">過往航行警告（歷史資料）</h2>
-        <span class="section-count history-count">{len(history_warnings)} 筆</span>
-        </div>
-    """
-                html += _render_warnings(history_warnings, is_today=False)
-
-            html += """
-    </div><!-- /content-area -->
-
-    <div class="footer">
-        <p>⚠️ 此為自動發送的郵件，請勿直接回覆</p>
-        <p>航行警告監控系統 v3.1 &nbsp;|&nbsp; Navigation Warning Monitor System</p>
+                if is_today:
+                    result += f"""
+    <div class="warning-card-today">
+    <div class="card-header-today">
+        <div class="card-index-today">{idx}</div>
+        <div class="card-title-today">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
+        <span class="new-tag">NEW</span>
     </div>
+    <div class="card-body">
+        <div class="meta-row">
+        <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
+        <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
+        <span class="meta-chip kw">🔑 {kw_str}</span>
+        {level_chip}
+        </div>
+        {details_html}
+        {coord_html}
+        <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
+    </div>
+    </div>"""
+                else:
+                    result += f"""
+    <div class="warning-card-history">
+    <div class="card-header-history">
+        <div class="card-index-history">{idx}</div>
+        <div class="card-title-history">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
+    </div>
+    <div class="card-body">
+        <div class="meta-row">
+        <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
+        <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
+        <span class="meta-chip kw">🔑 {kw_str}</span>
+        {level_chip}
+        </div>
+        {details_html}
+        {coord_html}
+        <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
+    </div>
+    </div>"""
+            return result
 
-    </div><!-- /container -->
-    </body>
-    </html>"""
-            return html
+        # ── 今日新增區段 ──
+        if today_warnings:
+            html += f"""
+    <div class="section-header-today">
+    <span style="font-size:20px;">🚨</span>
+    <h2 class="section-title">今日新增航行警告</h2>
+    <span class="section-count today-count">{len(today_warnings)} 筆</span>
+    </div>
+"""
+            html += _render_warnings(today_warnings, is_today=True)
+
+        if today_warnings and history_warnings:
+            html += '<hr class="divider">'
+
+        # ── 歷史資料區段 ──
+        if history_warnings:
+            html += f"""
+    <div class="section-header-history">
+    <span style="font-size:20px;">📚</span>
+    <h2 class="section-title">過往航行警告（歷史資料）</h2>
+    <span class="section-count history-count">{len(history_warnings)} 筆</span>
+    </div>
+"""
+            html += _render_warnings(history_warnings, is_today=False)
+
+        html += """
+</div><!-- /content-area -->
+
+<div class="footer">
+    <p>⚠️ 此為自動發送的郵件，請勿直接回覆</p>
+    <p>航行警告監控系統 v3.1 &nbsp;|&nbsp; Navigation Warning Monitor System</p>
+</div>
+
+</div><!-- /container -->
+</body>
+</html>"""
+        return html
 
 
 
