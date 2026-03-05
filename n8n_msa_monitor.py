@@ -109,7 +109,7 @@ class CoordinateExtractor:
                 if lon_dir in ['W', 'w', '西']:
                     lon = -lon
                 return (lat, lon)
-            except:
+            except Exception:
                 return None
         if len(groups) >= 6 and groups[0] in ['N', 'S', 'n', 's', '北', '南']:
             try:
@@ -126,7 +126,7 @@ class CoordinateExtractor:
                 if lon_dir in ['W', 'w', '西']:
                     lon = -lon
                 return (lat, lon)
-            except:
+            except Exception:
                 return None
         if len(groups) >= 6:
             try:
@@ -143,7 +143,7 @@ class CoordinateExtractor:
                 if lon_dir in ['W', 'w', '西']:
                     lon = -lon
                 return (lat, lon)
-            except:
+            except Exception:
                 return None
         return None
 
@@ -203,13 +203,27 @@ class UnifiedTeamsNotifier:
             "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
             "type": "AdaptiveCard",
             "version": "1.4",
-            "body": [{"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Large", "color": "Attention"}] + body_elements
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": title,
+                    "weight": "Bolder",
+                    "size": "Large",
+                    "color": "Attention"
+                }
+            ] + body_elements
         }
         if actions:
             card_content["actions"] = actions
         return {
             "type": "message",
-            "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "contentUrl": None, "content": card_content}]
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "contentUrl": None,
+                    "content": card_content
+                }
+            ]
         }
 
     def send_batch_notification(self, warnings_list, source_type="CN_MSA", is_today=True):
@@ -217,9 +231,24 @@ class UnifiedTeamsNotifier:
             return False
         try:
             source_config = {
-                "TW_MPB": {"icon": "🇹🇼", "name": "台灣航港局",    "home_url": "https://www.motcmpb.gov.tw/Information/Notice?SiteId=1&NodeId=483", "base_domain": "https://www.motcmpb.gov.tw"},
-                "UKMTO":  {"icon": "🇬🇧", "name": "UKMTO 航行警告","home_url": "https://www.ukmto.org/recent-incidents",                             "base_domain": "https://www.ukmto.org"},
-                "CN_MSA": {"icon": "🇨🇳", "name": "中國海事局",    "home_url": "https://www.msa.gov.cn/page/outter/weather.jsp",                     "base_domain": "https://www.msa.gov.cn"},
+                "TW_MPB": {
+                    "icon": "🇹🇼",
+                    "name": "台灣航港局",
+                    "home_url": "https://www.motcmpb.gov.tw/Information/Notice?SiteId=1&NodeId=483",
+                    "base_domain": "https://www.motcmpb.gov.tw"
+                },
+                "UKMTO": {
+                    "icon": "🇬🇧",
+                    "name": "UKMTO 航行警告",
+                    "home_url": "https://www.ukmto.org/recent-incidents",
+                    "base_domain": "https://www.ukmto.org"
+                },
+                "CN_MSA": {
+                    "icon": "🇨🇳",
+                    "name": "中國海事局",
+                    "home_url": "https://www.msa.gov.cn/page/outter/weather.jsp",
+                    "base_domain": "https://www.msa.gov.cn"
+                },
             }
             cfg         = source_config.get(source_type, source_config["CN_MSA"])
             source_icon = cfg["icon"]
@@ -230,9 +259,23 @@ class UnifiedTeamsNotifier:
             title_color = "Attention" if is_today else "Good"
 
             body_elements = [
-                {"type": "TextBlock", "text": f"{source_icon} **{source_name}** | {time_badge}", "size": "Medium", "weight": "Bolder", "color": title_color},
-                {"type": "TextBlock", "text": f"發現 **{len(warnings_list)}** 個航行警告", "size": "Medium"},
-                {"type": "TextBlock", "text": "━━━━━━━━━━━━━━━━━━━━", "wrap": True}
+                {
+                    "type": "TextBlock",
+                    "text": f"{source_icon} **{source_name}** | {time_badge}",
+                    "size": "Medium",
+                    "weight": "Bolder",
+                    "color": title_color
+                },
+                {
+                    "type": "TextBlock",
+                    "text": f"發現 **{len(warnings_list)}** 個航行警告",
+                    "size": "Medium"
+                },
+                {
+                    "type": "TextBlock",
+                    "text": "━━━━━━━━━━━━━━━━━━━━",
+                    "wrap": True
+                }
             ]
             actions = []
 
@@ -246,26 +289,32 @@ class UnifiedTeamsNotifier:
                     try:
                         coord_list = json.loads(coordinates) if isinstance(coordinates, str) else coordinates
                         if coord_list:
-                            first   = coord_list[0]
+                            first    = coord_list[0]
                             lat, lon = first[0], first[1]
                             lat_dir  = 'N' if lat >= 0 else 'S'
                             lon_dir  = 'E' if lon >= 0 else 'W'
                             coord_summary = f"📍 {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}"
                             if len(coord_list) > 1:
                                 coord_summary += f" (+{len(coord_list)-1})"
-                    except:
+                    except Exception:
                         coord_summary = "座標格式錯誤"
 
                 # ── 組裝卡片元素 ──
                 item_elements = [
-                    {"type": "TextBlock", "text": f"**{idx}. {bureau}**",
-                    "weight": "Bolder", "color": "Accent", "spacing": "Medium"},
-                    {"type": "TextBlock", "text": title[:100], "wrap": True},
+                    {
+                        "type": "TextBlock",
+                        "text": f"**{idx}. {bureau}**",
+                        "weight": "Bolder",
+                        "color": "Accent",
+                        "spacing": "Medium"
+                    },
+                    {
+                        "type": "TextBlock",
+                        "text": title[:100],
+                        "wrap": True
+                    },
                 ]
 
-                # UKMTO 專屬：顯示完整通告內容
-                # w 是 tuple 時沒有 details，需要從 all_captured 取得
-                # → 在主程式 _to_teams_tuple() 把 details 放進 tuple[6]（原本是空字串）
                 details_text = w[6] if isinstance(w, (list, tuple)) and len(w) > 6 else ""
                 if details_text and source_type == "UKMTO":
                     item_elements.append({
@@ -287,18 +336,36 @@ class UnifiedTeamsNotifier:
                 body_elements.extend(item_elements)
 
                 if len(actions) < 4:
-                    actions.append({"type": "Action.OpenUrl", "title": f"📄 公告 {idx}", "url": fixed_link})
+                    actions.append({
+                        "type": "Action.OpenUrl",
+                        "title": f"📄 公告 {idx}",
+                        "url": fixed_link
+                    })
 
             if len(warnings_list) > 8:
-                body_elements.append({"type": "TextBlock", "text": f"*...還有 {len(warnings_list)-8} 筆未顯示*", "isSubtle": True})
+                body_elements.append({
+                    "type": "TextBlock",
+                    "text": f"*...還有 {len(warnings_list)-8} 筆未顯示*",
+                    "isSubtle": True
+                })
 
-            actions.append({"type": "Action.OpenUrl", "title": f"🏠 {source_name}首頁", "url": home_url})
+            actions.append({
+                "type": "Action.OpenUrl",
+                "title": f"🏠 {source_name}首頁",
+                "url": home_url
+            })
 
             card_title = f"{'🚨' if is_today else '📋'} {source_name} - {time_badge} ({len(warnings_list)})"
             payload    = self._create_adaptive_card(card_title, body_elements, actions)
 
             print(f"  📤 正在發送 Teams 通知 [{time_badge}] 到: {self.webhook_url[:50]}...")
-            response = requests.post(self.webhook_url, json=payload, headers={"Content-Type": "application/json"}, timeout=30, verify=False)
+            response = requests.post(
+                self.webhook_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30,
+                verify=False
+            )
 
             if response.status_code in [200, 202]:
                 print(f"✅ {source_name} Teams 通知發送成功 [{time_badge}] ({len(warnings_list)} 筆)")
@@ -308,13 +375,18 @@ class UnifiedTeamsNotifier:
                 return False
 
         except requests.exceptions.SSLError as e:
-            print(f"❌ Teams SSL 錯誤: {e}"); return False
+            print(f"❌ Teams SSL 錯誤: {e}")
+            return False
         except requests.exceptions.Timeout as e:
-            print(f"❌ Teams 連線逾時: {e}"); return False
+            print(f"❌ Teams 連線逾時: {e}")
+            return False
         except requests.exceptions.ConnectionError as e:
-            print(f"❌ Teams 連線錯誤: {e}"); return False
+            print(f"❌ Teams 連線錯誤: {e}")
+            return False
         except Exception as e:
-            print(f"❌ Teams 發送失敗: {e}"); traceback.print_exc(); return False
+            print(f"❌ Teams 發送失敗: {e}")
+            traceback.print_exc()
+            return False
 
 
 # ==================== 4. Email 通知系統 ====================
@@ -326,15 +398,18 @@ class GmailRelayNotifier:
         self.smtp_server  = "smtp.gmail.com"
         self.smtp_port    = 587
         if not all([mail_user, mail_pass, target_email]):
-            print("⚠️ Email 通知未完整設定"); self.enabled = False
+            print("⚠️ Email 通知未完整設定")
+            self.enabled = False
         else:
-            self.enabled = True; print("✅ Email 通知系統已啟用")
+            self.enabled = True
+            print("✅ Email 通知系統已啟用")
 
     def send_trigger_email(self, today_warnings, history_warnings):
         if not self.enabled:
-            print("ℹ️ Email 通知未啟用"); return False
+            print("ℹ️ Email 通知未啟用")
+            return False
         try:
-            msg = MIMEMultipart('related')
+            msg         = MIMEMultipart('related')
             total_count = len(today_warnings) + len(history_warnings)
             msg['Subject'] = (
                 f"🌊 航行警告監控報告 - 共{total_count}筆 (今日{len(today_warnings)}筆) - "
@@ -342,17 +417,26 @@ class GmailRelayNotifier:
             )
             msg['From'] = self.mail_user
             msg['To']   = self.target_email
-            msg_alt = MIMEMultipart('alternative')
+            msg_alt     = MIMEMultipart('alternative')
             msg.attach(msg_alt)
-            msg_alt.attach(MIMEText(self._generate_html_report(today_warnings, history_warnings), 'html', 'utf-8'))
+            msg_alt.attach(
+                MIMEText(
+                    self._generate_html_report(today_warnings, history_warnings),
+                    'html',
+                    'utf-8'
+                )
+            )
             print(f"📧 正在發送郵件至 {self.target_email}...")
             with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
                 server.starttls()
                 server.login(self.mail_user, self.mail_pass)
                 server.send_message(msg)
-            print("✅ 郵件發送成功"); return True
+            print("✅ 郵件發送成功")
+            return True
         except Exception as e:
-            print(f"❌ 郵件發送失敗: {e}"); traceback.print_exc(); return False
+            print(f"❌ 郵件發送失敗: {e}")
+            traceback.print_exc()
+            return False
 
     def _source_icon(self, source):
         return {"TW_MPB": "🇹🇼", "UKMTO": "🇬🇧"}.get(source, "🇨🇳")
@@ -373,434 +457,426 @@ class GmailRelayNotifier:
         uk_total   = uk_today + uk_history
 
         # ── 座標統計 ──
-        cn_coords  = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'CN_MSA')
-        tw_coords  = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'TW_MPB')
-        uk_coords  = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'UKMTO')
+        cn_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'CN_MSA')
+        tw_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'TW_MPB')
+        uk_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'UKMTO')
         total_coords = cn_coords + tw_coords + uk_coords
 
         def _bar(value, max_val, color):
             """產生視覺化進度條 HTML"""
-            if max_val == 0:
-                pct = 0
-            else:
-                pct = min(100, round(value / max_val * 100))
-            return f'<div style="background:#e9ecef;border-radius:4px;height:8px;margin-top:5px;overflow:hidden;"><div style="width:{pct}%;background:{color};height:100%;border-radius:4px;transition:width 0.3s;"></div></div>'
+            pct = 0 if max_val == 0 else min(100, round(value / max_val * 100))
+            return (
+                f'<div style="background:#e9ecef;border-radius:4px;height:8px;'
+                f'margin-top:5px;overflow:hidden;">'
+                f'<div style="width:{pct}%;background:{color};height:100%;'
+                f'border-radius:4px;transition:width 0.3s;"></div></div>'
+            )
 
         max_total = max(cn_total, tw_total, uk_total, 1)
 
+        # ── 輔助函式：產生 num-badge HTML ──
+        def _badge(value, badge_type):
+            cls = badge_type if value > 0 else 'zero'
+            return f'<span class="num-badge {cls}">{value}</span>'
+
+        # ── 輔助函式：產生進度條欄 ──
+        def _bar_cell(subtotal, color):
+            pct = round(subtotal / max(total_count, 1) * 100)
+            return (
+                f'<td class="bar-cell">'
+                f'{_bar(subtotal, max_total, color)}'
+                f'<span style="font-size:11px;color:#718096;">{pct}%</span>'
+                f'</td>'
+            )
+
+        # ── 今日橫幅 ──
+        today_banner_html = ""
+        if today_warnings:
+            today_banner_html = (
+                f'<div class="today-banner">'
+                f'<span class="today-banner-text">🚨 今日發現 {len(today_warnings)} 筆新增航行警告</span>'
+                f'<span class="new-pulse-badge">NEW</span>'
+                f'</div>'
+            )
+
+        # ── 統計卡片 highlight class ──
+        highlight_cls = "highlight" if today_warnings else ""
+
         html = f"""<!DOCTYPE html>
-    <html lang="zh-TW">
-    <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>航行警告監控報告</title>
-    <style>
-    /* ── 基礎 ── */
-    body {{
-        font-family: 'Microsoft JhengHei', 'Segoe UI', Arial, sans-serif;
-        margin: 0; padding: 20px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        min-height: 100vh;
-    }}
-    .container {{
-        max-width: 1000px; margin: 0 auto;
-        background: #ffffff; padding: 0;
-        border-radius: 16px;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        overflow: hidden;
-    }}
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>航行警告監控報告</title>
+<style>
+/* ── 基礎 ── */
+body {{
+    font-family: 'Microsoft JhengHei', 'Segoe UI', Arial, sans-serif;
+    margin: 0; padding: 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+}}
+.container {{
+    max-width: 1000px; margin: 0 auto;
+    background: #ffffff; padding: 0;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    overflow: hidden;
+}}
 
-    /* ── 頂部 Banner ── */
-    .header-banner {{
-        background: linear-gradient(135deg, #003366 0%, #0066cc 100%);
-        padding: 30px 35px 25px;
-        color: white;
-    }}
-    .header-banner h1 {{
-        margin: 0 0 6px 0;
-        font-size: 24px; font-weight: 700;
-        letter-spacing: 1px;
-    }}
-    .header-time {{
-        font-size: 13px; opacity: 0.85; margin: 0;
-    }}
+/* ── 頂部 Banner ── */
+.header-banner {{
+    background: linear-gradient(135deg, #003366 0%, #0066cc 100%);
+    padding: 30px 35px 25px;
+    color: white;
+}}
+.header-banner h1 {{
+    margin: 0 0 6px 0;
+    font-size: 24px; font-weight: 700;
+    letter-spacing: 1px;
+}}
+.header-time {{
+    font-size: 13px; opacity: 0.85; margin: 0;
+}}
 
-    /* ── 今日新增醒目橫幅 ── */
-    .today-banner {{
-        background: linear-gradient(90deg, #c0392b 0%, #e74c3c 50%, #c0392b 100%);
-        padding: 14px 35px;
-        display: flex; align-items: center; gap: 12px;
-    }}
-    .today-banner-text {{
-        color: white; font-size: 18px; font-weight: 700; letter-spacing: 0.5px;
-    }}
-    .new-pulse-badge {{
-        background: white; color: #c0392b;
-        font-size: 11px; font-weight: 900;
-        padding: 3px 8px; border-radius: 20px; letter-spacing: 1px;
-    }}
+/* ── 今日新增醒目橫幅 ── */
+.today-banner {{
+    background: linear-gradient(90deg, #c0392b 0%, #e74c3c 50%, #c0392b 100%);
+    padding: 14px 35px;
+    display: flex; align-items: center; gap: 12px;
+}}
+.today-banner-text {{
+    color: white; font-size: 18px; font-weight: 700; letter-spacing: 0.5px;
+}}
+.new-pulse-badge {{
+    background: white; color: #c0392b;
+    font-size: 11px; font-weight: 900;
+    padding: 3px 8px; border-radius: 20px; letter-spacing: 1px;
+}}
 
-    /* ── 快速統計卡片 ── */
-    .summary-grid {{
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 0;
-        border-bottom: 3px solid #e9ecef;
-    }}
-    .stat-card {{
-        padding: 20px 15px; text-align: center;
-        border-right: 1px solid #e9ecef;
-    }}
-    .stat-card:last-child {{ border-right: none; }}
-    .stat-card.highlight {{ background: linear-gradient(135deg, #fff5f5, #ffe0e0); }}
-    .stat-number        {{ font-size: 36px; font-weight: 900; line-height: 1; margin-bottom: 4px; }}
-    .stat-number.red    {{ color: #e74c3c; }}
-    .stat-number.blue   {{ color: #0066cc; }}
-    .stat-number.gray   {{ color: #6c757d; }}
-    .stat-label         {{ font-size: 12px; color: #6c757d; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }}
-    .stat-sub           {{ font-size: 11px; color: #adb5bd; margin-top: 4px; }}
+/* ── 快速統計卡片 ── */
+.summary-grid {{
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-bottom: 3px solid #e9ecef;
+}}
+.stat-card {{
+    padding: 20px 15px; text-align: center;
+    border-right: 1px solid #e9ecef;
+}}
+.stat-card:last-child {{ border-right: none; }}
+.stat-card.highlight {{ background: linear-gradient(135deg, #fff5f5, #ffe0e0); }}
+.stat-number        {{ font-size: 36px; font-weight: 900; line-height: 1; margin-bottom: 4px; }}
+.stat-number.red    {{ color: #e74c3c; }}
+.stat-number.blue   {{ color: #0066cc; }}
+.stat-number.gray   {{ color: #6c757d; }}
+.stat-label         {{ font-size: 12px; color: #6c757d; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }}
+.stat-sub           {{ font-size: 11px; color: #adb5bd; margin-top: 4px; }}
 
-    /* ══════════════════════════════════════
-        ★ 來源統計總覽表（新增核心區塊）
-    ══════════════════════════════════════ */
-    .source-overview {{
-        margin: 0;
-        padding: 28px 35px 24px;
-        background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
-        border-bottom: 3px solid #e9ecef;
-    }}
-    .source-overview-title {{
-        font-size: 15px; font-weight: 700; color: #2d3748;
-        margin: 0 0 18px 0;
-        display: flex; align-items: center; gap: 8px;
-    }}
-    .source-overview-title::after {{
-        content: ''; flex: 1;
-        height: 2px;
-        background: linear-gradient(90deg, #0066cc, transparent);
-        margin-left: 10px;
-    }}
+/* ══ 來源統計總覽表 ══ */
+.source-overview {{
+    margin: 0;
+    padding: 28px 35px 24px;
+    background: linear-gradient(180deg, #f8faff 0%, #ffffff 100%);
+    border-bottom: 3px solid #e9ecef;
+}}
+.source-overview-title {{
+    font-size: 15px; font-weight: 700; color: #2d3748;
+    margin: 0 0 18px 0;
+    display: flex; align-items: center; gap: 8px;
+}}
+.source-overview-title::after {{
+    content: ''; flex: 1;
+    height: 2px;
+    background: linear-gradient(90deg, #0066cc, transparent);
+    margin-left: 10px;
+}}
+.overview-table {{
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    border-radius: 10px; overflow: hidden;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    font-size: 14px;
+}}
+.overview-table thead tr {{
+    background: linear-gradient(90deg, #003366, #0066cc);
+    color: white;
+}}
+.overview-table thead th {{
+    padding: 12px 16px; text-align: center;
+    font-weight: 700; font-size: 13px;
+    letter-spacing: 0.5px; border: none;
+}}
+.overview-table thead th:first-child {{ text-align: left; padding-left: 20px; }}
+.overview-table tbody tr {{
+    border-bottom: 1px solid #e9ecef;
+    transition: background 0.15s;
+}}
+.overview-table tbody tr:last-child {{ border-bottom: none; }}
+.overview-table tbody tr:hover {{ background: #f0f7ff; }}
+.overview-table tbody tr.row-cn {{ background: #fffaf0; }}
+.overview-table tbody tr.row-cn:hover {{ background: #fff3cd; }}
+.overview-table tbody tr.row-tw {{ background: #f0fff4; }}
+.overview-table tbody tr.row-tw:hover {{ background: #d4edda; }}
+.overview-table tbody tr.row-uk {{ background: #f0f4ff; }}
+.overview-table tbody tr.row-uk:hover {{ background: #d6e4ff; }}
+.overview-table tbody tr.row-total {{
+    background: linear-gradient(90deg, #f8f9fa, #e9ecef);
+    font-weight: 700;
+    border-top: 2px solid #dee2e6;
+}}
+.overview-table td {{
+    padding: 13px 16px; text-align: center;
+    vertical-align: middle; border: none;
+}}
+.overview-table td:first-child {{ text-align: left; padding-left: 20px; }}
+.source-name {{
+    display: flex; align-items: center; gap: 10px;
+}}
+.source-flag {{ font-size: 22px; line-height: 1; }}
+.source-info {{ display: flex; flex-direction: column; }}
+.source-main {{ font-weight: 700; color: #2d3748; font-size: 14px; }}
+.source-sub  {{ font-size: 11px; color: #718096; margin-top: 1px; }}
+.num-badge {{
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 32px; height: 28px;
+    border-radius: 6px; font-weight: 700; font-size: 15px;
+    padding: 0 8px;
+}}
+.num-badge.new   {{ background: #fff0f0; color: #e74c3c; border: 1.5px solid #f5c6cb; }}
+.num-badge.hist  {{ background: #f0fff4; color: #27ae60; border: 1.5px solid #c3e6cb; }}
+.num-badge.tot   {{ background: #e8f0fe; color: #0066cc; border: 1.5px solid #b8d0f8; font-size: 16px; }}
+.num-badge.zero  {{ background: #f8f9fa; color: #adb5bd; border: 1.5px solid #dee2e6; }}
+.num-badge.coord {{ background: #fff8e1; color: #d69e2e; border: 1.5px solid #fde68a; font-size: 13px; }}
+.bar-cell {{ min-width: 120px; }}
+.total-label {{
+    font-weight: 800; color: #2d3748; font-size: 14px;
+    display: flex; align-items: center; gap: 8px;
+}}
 
-    /* 表格本體 */
-    .overview-table {{
-        width: 100%; border-collapse: separate; border-spacing: 0;
-        border-radius: 10px; overflow: hidden;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-        font-size: 14px;
-    }}
-    .overview-table thead tr {{
-        background: linear-gradient(90deg, #003366, #0066cc);
-        color: white;
-    }}
-    .overview-table thead th {{
-        padding: 12px 16px; text-align: center;
-        font-weight: 700; font-size: 13px;
-        letter-spacing: 0.5px;
-        border: none;
-    }}
-    .overview-table thead th:first-child {{ text-align: left; padding-left: 20px; }}
+/* ── 內容區 ── */
+.content-area {{ padding: 25px 35px; }}
 
-    /* 資料列 */
-    .overview-table tbody tr {{
-        border-bottom: 1px solid #e9ecef;
-        transition: background 0.15s;
-    }}
-    .overview-table tbody tr:last-child {{ border-bottom: none; }}
-    .overview-table tbody tr:hover {{ background: #f0f7ff; }}
-    .overview-table tbody tr.row-cn {{ background: #fffaf0; }}
-    .overview-table tbody tr.row-cn:hover {{ background: #fff3cd; }}
-    .overview-table tbody tr.row-tw {{ background: #f0fff4; }}
-    .overview-table tbody tr.row-tw:hover {{ background: #d4edda; }}
-    .overview-table tbody tr.row-uk {{ background: #f0f4ff; }}
-    .overview-table tbody tr.row-uk:hover {{ background: #d6e4ff; }}
-    .overview-table tbody tr.row-total {{
-        background: linear-gradient(90deg, #f8f9fa, #e9ecef);
-        font-weight: 700;
-        border-top: 2px solid #dee2e6;
-    }}
+/* ── 區段標題 ── */
+.section-header-today {{
+    display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(90deg, #fff0f0, #ffffff);
+    border-left: 5px solid #e74c3c;
+    padding: 12px 18px; margin: 0 0 20px 0;
+    border-radius: 0 8px 8px 0;
+}}
+.section-header-history {{
+    display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(90deg, #f0f8f0, #ffffff);
+    border-left: 5px solid #27ae60;
+    padding: 12px 18px; margin: 25px 0 20px 0;
+    border-radius: 0 8px 8px 0;
+}}
+.section-title {{ font-size: 17px; font-weight: 700; color: #2d3748; margin: 0; }}
+.section-count {{ margin-left: auto; font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }}
+.section-count.today-count   {{ background: #e74c3c; color: white; }}
+.section-count.history-count {{ background: #27ae60; color: white; }}
 
-    .overview-table td {{
-        padding: 13px 16px; text-align: center;
-        vertical-align: middle; border: none;
-    }}
-    .overview-table td:first-child {{ text-align: left; padding-left: 20px; }}
+/* ── 警告卡片：今日 ── */
+.warning-card-today {{
+    background: #ffffff; border: 2px solid #e74c3c;
+    border-radius: 10px; margin-bottom: 16px; overflow: hidden;
+    box-shadow: 0 4px 15px rgba(231,76,60,0.15);
+}}
+.card-header-today {{
+    background: linear-gradient(90deg, #e74c3c, #c0392b);
+    padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+}}
+.card-index-today {{
+    background: white; color: #e74c3c; font-size: 13px; font-weight: 900;
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}}
+.card-title-today  {{ color: white; font-size: 14px; font-weight: 700; flex: 1; line-height: 1.4; }}
+.new-tag {{
+    background: #fff3cd; color: #856404; font-size: 10px; font-weight: 900;
+    padding: 2px 7px; border-radius: 3px; letter-spacing: 1px; flex-shrink: 0;
+}}
 
-    /* 來源名稱欄 */
-    .source-name {{
-        display: flex; align-items: center; gap: 10px;
-    }}
-    .source-flag {{ font-size: 22px; line-height: 1; }}
-    .source-info {{ display: flex; flex-direction: column; }}
-    .source-main {{ font-weight: 700; color: #2d3748; font-size: 14px; }}
-    .source-sub  {{ font-size: 11px; color: #718096; margin-top: 1px; }}
+/* ── 警告卡片：歷史 ── */
+.warning-card-history {{
+    background: #fafafa; border: 1px solid #dee2e6;
+    border-left: 4px solid #27ae60; border-radius: 8px;
+    margin-bottom: 12px; overflow: hidden; opacity: 0.9;
+}}
+.card-header-history {{
+    background: #f8f9fa; padding: 10px 16px;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid #e9ecef;
+}}
+.card-index-history {{
+    background: #6c757d; color: white; font-size: 12px; font-weight: 700;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}}
+.card-title-history {{ color: #495057; font-size: 14px; font-weight: 600; flex: 1; line-height: 1.4; }}
 
-    /* 數字徽章 */
-    .num-badge {{
-        display: inline-flex; align-items: center; justify-content: center;
-        min-width: 32px; height: 28px;
-        border-radius: 6px; font-weight: 700; font-size: 15px;
-        padding: 0 8px;
-    }}
-    .num-badge.new  {{ background: #fff0f0; color: #e74c3c; border: 1.5px solid #f5c6cb; }}
-    .num-badge.hist {{ background: #f0fff4; color: #27ae60; border: 1.5px solid #c3e6cb; }}
-    .num-badge.tot  {{ background: #e8f0fe; color: #0066cc; border: 1.5px solid #b8d0f8; font-size: 16px; }}
-    .num-badge.zero {{ background: #f8f9fa; color: #adb5bd; border: 1.5px solid #dee2e6; }}
-    .num-badge.coord {{ background: #fff8e1; color: #d69e2e; border: 1.5px solid #fde68a; font-size: 13px; }}
+/* ── 卡片內容 ── */
+.card-body {{ padding: 12px 16px; }}
+.meta-row  {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }}
+.meta-chip {{ font-size: 12px; padding: 3px 8px; border-radius: 4px; background: #e9ecef; color: #495057; }}
+.meta-chip.time         {{ background: #e3f2fd; color: #1565c0; }}
+.meta-chip.unit         {{ background: #f3e5f5; color: #6a1b9a; }}
+.meta-chip.kw           {{ background: #e8f5e9; color: #2e7d32; }}
+.meta-chip.level-red    {{ background: #ffebee; color: #c62828; }}
+.meta-chip.level-yellow {{ background: #fff8e1; color: #f57f17; }}
 
-    /* 進度條欄 */
-    .bar-cell {{ min-width: 120px; }}
+/* ── 通告內容 ── */
+.details-block {{
+    background: #fffbea; border: 1px solid #f6e05e;
+    border-left: 4px solid #d69e2e; padding: 10px 14px;
+    margin: 10px 0; border-radius: 5px;
+    font-size: 13px; color: #2d3748; line-height: 1.7;
+}}
 
-    /* 合計列特殊樣式 */
-    .total-label {{
-        font-weight: 800; color: #2d3748; font-size: 14px;
-        display: flex; align-items: center; gap: 8px;
-    }}
+/* ── 座標 ── */
+.coordinates {{
+    background: #e8f4fd; border: 1px solid #bee3f8;
+    border-radius: 6px; padding: 10px 14px; margin-top: 8px;
+    font-family: 'Courier New', monospace; font-size: 12px;
+}}
+.coord-source-label {{ font-weight: 700; color: #2b6cb0; margin-bottom: 6px; font-family: inherit; font-size: 12px; }}
+.coord-item         {{ margin: 4px 0; color: #2d3748; }}
+.coord-map-link     {{ font-size: 11px; color: #3182ce; text-decoration: none; margin-left: 8px; }}
 
-    /* ── 內容區 ── */
-    .content-area {{ padding: 25px 35px; }}
+/* ── 其他 ── */
+.source-tag  {{ display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; background: #6c5ce7; color: white; margin-left: 6px; vertical-align: middle; }}
+.view-link   {{ display: inline-block; margin-top: 8px; font-size: 13px; color: #3182ce; text-decoration: none; font-weight: 600; }}
+.divider     {{ border: none; border-top: 2px dashed #e9ecef; margin: 25px 0; }}
 
-    /* ── 區段標題 ── */
-    .section-header-today {{
-        display: flex; align-items: center; gap: 12px;
-        background: linear-gradient(90deg, #fff0f0, #ffffff);
-        border-left: 5px solid #e74c3c;
-        padding: 12px 18px; margin: 0 0 20px 0;
-        border-radius: 0 8px 8px 0;
-    }}
-    .section-header-history {{
-        display: flex; align-items: center; gap: 12px;
-        background: linear-gradient(90deg, #f0f8f0, #ffffff);
-        border-left: 5px solid #27ae60;
-        padding: 12px 18px; margin: 25px 0 20px 0;
-        border-radius: 0 8px 8px 0;
-    }}
-    .section-title {{ font-size: 17px; font-weight: 700; color: #2d3748; margin: 0; }}
-    .section-count {{ margin-left: auto; font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 20px; }}
-    .section-count.today-count   {{ background: #e74c3c; color: white; }}
-    .section-count.history-count {{ background: #27ae60; color: white; }}
+/* ── 頁尾 ── */
+.footer {{
+    background: #f8f9fa; border-top: 2px solid #e9ecef;
+    padding: 20px 35px; text-align: center;
+    color: #6c757d; font-size: 12px; line-height: 1.8;
+}}
+</style>
+</head>
+<body>
+<div class="container">
 
-    /* ── 警告卡片：今日 ── */
-    .warning-card-today {{
-        background: #ffffff; border: 2px solid #e74c3c;
-        border-radius: 10px; margin-bottom: 16px; overflow: hidden;
-        box-shadow: 0 4px 15px rgba(231,76,60,0.15);
-    }}
-    .card-header-today {{
-        background: linear-gradient(90deg, #e74c3c, #c0392b);
-        padding: 10px 16px; display: flex; align-items: center; gap: 10px;
-    }}
-    .card-index-today {{
-        background: white; color: #e74c3c; font-size: 13px; font-weight: 900;
-        width: 26px; height: 26px; border-radius: 50%;
-        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }}
-    .card-title-today  {{ color: white; font-size: 14px; font-weight: 700; flex: 1; line-height: 1.4; }}
-    .new-tag {{
-        background: #fff3cd; color: #856404; font-size: 10px; font-weight: 900;
-        padding: 2px 7px; border-radius: 3px; letter-spacing: 1px; flex-shrink: 0;
-    }}
+<!-- ══ 頂部 Banner ══ -->
+<div class="header-banner">
+    <h1>🌊 WHL_FRM 海事警告監控報告</h1>
+    <p class="header-time">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.1</p>
+</div>
 
-    /* ── 警告卡片：歷史 ── */
-    .warning-card-history {{
-        background: #fafafa; border: 1px solid #dee2e6;
-        border-left: 4px solid #27ae60; border-radius: 8px;
-        margin-bottom: 12px; overflow: hidden; opacity: 0.9;
-    }}
-    .card-header-history {{
-        background: #f8f9fa; padding: 10px 16px;
-        display: flex; align-items: center; gap: 10px;
-        border-bottom: 1px solid #e9ecef;
-    }}
-    .card-index-history {{
-        background: #6c757d; color: white; font-size: 12px; font-weight: 700;
-        width: 22px; height: 22px; border-radius: 50%;
-        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }}
-    .card-title-history {{ color: #495057; font-size: 14px; font-weight: 600; flex: 1; line-height: 1.4; }}
+<!-- ══ 今日新增醒目橫幅 ══ -->
+{today_banner_html}
 
-    /* ── 卡片內容 ── */
-    .card-body {{ padding: 12px 16px; }}
-    .meta-row  {{ display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }}
-    .meta-chip {{ font-size: 12px; padding: 3px 8px; border-radius: 4px; background: #e9ecef; color: #495057; }}
-    .meta-chip.time         {{ background: #e3f2fd; color: #1565c0; }}
-    .meta-chip.unit         {{ background: #f3e5f5; color: #6a1b9a; }}
-    .meta-chip.kw           {{ background: #e8f5e9; color: #2e7d32; }}
-    .meta-chip.level-red    {{ background: #ffebee; color: #c62828; }}
-    .meta-chip.level-yellow {{ background: #fff8e1; color: #f57f17; }}
-
-    /* ── 通告內容 ── */
-    .details-block {{
-        background: #fffbea; border: 1px solid #f6e05e;
-        border-left: 4px solid #d69e2e; padding: 10px 14px;
-        margin: 10px 0; border-radius: 5px;
-        font-size: 13px; color: #2d3748; line-height: 1.7;
-    }}
-
-    /* ── 座標 ── */
-    .coordinates {{
-        background: #e8f4fd; border: 1px solid #bee3f8;
-        border-radius: 6px; padding: 10px 14px; margin-top: 8px;
-        font-family: 'Courier New', monospace; font-size: 12px;
-    }}
-    .coord-source-label {{ font-weight: 700; color: #2b6cb0; margin-bottom: 6px; font-family: inherit; font-size: 12px; }}
-    .coord-item         {{ margin: 4px 0; color: #2d3748; }}
-    .coord-map-link     {{ font-size: 11px; color: #3182ce; text-decoration: none; margin-left: 8px; }}
-
-    /* ── 其他 ── */
-    .source-tag  {{ display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; background: #6c5ce7; color: white; margin-left: 6px; vertical-align: middle; }}
-    .view-link   {{ display: inline-block; margin-top: 8px; font-size: 13px; color: #3182ce; text-decoration: none; font-weight: 600; }}
-    .divider     {{ border: none; border-top: 2px dashed #e9ecef; margin: 25px 0; }}
-
-    /* ── 頁尾 ── */
-    .footer {{
-        background: #f8f9fa; border-top: 2px solid #e9ecef;
-        padding: 20px 35px; text-align: center;
-        color: #6c757d; font-size: 12px; line-height: 1.8;
-    }}
-    </style>
-    </head>
-    <body>
-    <div class="container">
-
-    <!-- ══ 頂部 Banner ══ -->
-    <div class="header-banner">
-        <h1>🌊 WHL_FRM 海事警告監控報告</h1>
-        <p class="header-time">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.1</p>
-    </div>
-
-    <!-- ══ 今日新增醒目橫幅 ══ -->
-    {'<div class="today-banner"><span class="today-banner-text">🚨 今日發現 ' + str(len(today_warnings)) + ' 筆新增航行警告</span><span class="new-pulse-badge">NEW</span></div>' if today_warnings else ''}
-
-    <!-- ══ 快速統計卡片 ══ -->
-    <div class="summary-grid">
-        <div class="stat-card {'highlight' if today_warnings else ''}">
+<!-- ══ 快速統計卡片 ══ -->
+<div class="summary-grid">
+    <div class="stat-card {highlight_cls}">
         <div class="stat-number red">{len(today_warnings)}</div>
         <div class="stat-label">今日新增</div>
         <div class="stat-sub">⚠️ 需重點關注</div>
-        </div>
-        <div class="stat-card">
+    </div>
+    <div class="stat-card">
         <div class="stat-number gray">{len(history_warnings)}</div>
         <div class="stat-label">歷史資料</div>
         <div class="stat-sub">近期累積</div>
-        </div>
-        <div class="stat-card">
+    </div>
+    <div class="stat-card">
         <div class="stat-number blue">{total_count}</div>
         <div class="stat-label">本次總計</div>
         <div class="stat-sub">所有來源</div>
-        </div>
-        <div class="stat-card">
-        <div class="stat-number blue" style="font-size:28px;padding-top:4px;">
-            {total_coords}
-        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-number blue" style="font-size:28px;padding-top:4px;">{total_coords}</div>
         <div class="stat-label">座標點數</div>
         <div class="stat-sub">📍 已定位</div>
-        </div>
     </div>
+</div>
 
-    <!-- ══════════════════════════════════════════
-        ★ 來源統計總覽表（核心新增區塊）
-    ══════════════════════════════════════════ -->
-    <div class="source-overview">
-        <p class="source-overview-title">📊 各來源警告統計總覽</p>
-
-        <table class="overview-table">
-        <thead>
-            <tr>
+<!-- ══ 來源統計總覽表 ══ -->
+<div class="source-overview">
+    <p class="source-overview-title">📊 各來源警告統計總覽</p>
+    <table class="overview-table">
+    <thead>
+        <tr>
             <th style="width:28%;">資料來源</th>
             <th style="width:14%;">🆕 今日新增</th>
             <th style="width:14%;">📚 歷史資料</th>
             <th style="width:14%;">📊 小計</th>
             <th style="width:14%;">📍 座標點</th>
             <th style="width:16%;">佔比</th>
-            </tr>
-        </thead>
-        <tbody>
-
-            <!-- 中國海事局 -->
-            <tr class="row-cn">
+        </tr>
+    </thead>
+    <tbody>
+        <!-- 中國海事局 -->
+        <tr class="row-cn">
             <td>
                 <div class="source-name">
-                <span class="source-flag">🇨🇳</span>
-                <div class="source-info">
-                    <span class="source-main">中國海事局</span>
-                    <span class="source-sub">China MSA</span>
-                </div>
+                    <span class="source-flag">🇨🇳</span>
+                    <div class="source-info">
+                        <span class="source-main">中國海事局</span>
+                        <span class="source-sub">China MSA</span>
+                    </div>
                 </div>
             </td>
-            <td><span class="num-badge {'new' if cn_today > 0 else 'zero'}">{cn_today}</span></td>
-            <td><span class="num-badge {'hist' if cn_history > 0 else 'zero'}">{cn_history}</span></td>
-            <td><span class="num-badge {'tot' if cn_total > 0 else 'zero'}">{cn_total}</span></td>
-            <td><span class="num-badge {'coord' if cn_coords > 0 else 'zero'}">{cn_coords}</span></td>
-            <td class="bar-cell">
-                {_bar(cn_total, max_total, '#e67e22')}
-                <span style="font-size:11px;color:#718096;">{round(cn_total/max(total_count,1)*100)}%</span>
-            </td>
-            </tr>
-
-            <!-- 台灣航港局 -->
-            <tr class="row-tw">
+            <td>{_badge(cn_today, 'new')}</td>
+            <td>{_badge(cn_history, 'hist')}</td>
+            <td>{_badge(cn_total, 'tot')}</td>
+            <td>{_badge(cn_coords, 'coord')}</td>
+            {_bar_cell(cn_total, '#e67e22')}
+        </tr>
+        <!-- 台灣航港局 -->
+        <tr class="row-tw">
             <td>
                 <div class="source-name">
-                <span class="source-flag">🇹🇼</span>
-                <div class="source-info">
-                    <span class="source-main">台灣航港局</span>
-                    <span class="source-sub">Taiwan MOTCMPB</span>
-                </div>
+                    <span class="source-flag">🇹🇼</span>
+                    <div class="source-info">
+                        <span class="source-main">台灣航港局</span>
+                        <span class="source-sub">Taiwan MOTCMPB</span>
+                    </div>
                 </div>
             </td>
-            <td><span class="num-badge {'new' if tw_today > 0 else 'zero'}">{tw_today}</span></td>
-            <td><span class="num-badge {'hist' if tw_history > 0 else 'zero'}">{tw_history}</span></td>
-            <td><span class="num-badge {'tot' if tw_total > 0 else 'zero'}">{tw_total}</span></td>
-            <td><span class="num-badge {'coord' if tw_coords > 0 else 'zero'}">{tw_coords}</span></td>
-            <td class="bar-cell">
-                {_bar(tw_total, max_total, '#27ae60')}
-                <span style="font-size:11px;color:#718096;">{round(tw_total/max(total_count,1)*100)}%</span>
-            </td>
-            </tr>
-
-            <!-- UKMTO -->
-            <tr class="row-uk">
+            <td>{_badge(tw_today, 'new')}</td>
+            <td>{_badge(tw_history, 'hist')}</td>
+            <td>{_badge(tw_total, 'tot')}</td>
+            <td>{_badge(tw_coords, 'coord')}</td>
+            {_bar_cell(tw_total, '#27ae60')}
+        </tr>
+        <!-- UKMTO -->
+        <tr class="row-uk">
             <td>
                 <div class="source-name">
-                <span class="source-flag">🇬🇧</span>
-                <div class="source-info">
-                    <span class="source-main">UKMTO</span>
-                    <span class="source-sub">UK Maritime Trade Ops</span>
+                    <span class="source-flag">🇬🇧</span>
+                    <div class="source-info">
+                        <span class="source-main">UKMTO</span>
+                        <span class="source-sub">UK Maritime Trade Ops</span>
+                    </div>
                 </div>
-                </div>
             </td>
-            <td><span class="num-badge {'new' if uk_today > 0 else 'zero'}">{uk_today}</span></td>
-            <td><span class="num-badge {'hist' if uk_history > 0 else 'zero'}">{uk_history}</span></td>
-            <td><span class="num-badge {'tot' if uk_total > 0 else 'zero'}">{uk_total}</span></td>
-            <td><span class="num-badge {'coord' if uk_coords > 0 else 'zero'}">{uk_coords}</span></td>
-            <td class="bar-cell">
-                {_bar(uk_total, max_total, '#0066cc')}
-                <span style="font-size:11px;color:#718096;">{round(uk_total/max(total_count,1)*100)}%</span>
-            </td>
-            </tr>
-
-            <!-- 合計列 -->
-            <tr class="row-total">
-            <td>
-                <span class="total-label">📈 合計</span>
-            </td>
-            <td><span class="num-badge new">{len(today_warnings)}</span></td>
-            <td><span class="num-badge hist">{len(history_warnings)}</span></td>
-            <td><span class="num-badge tot">{total_count}</span></td>
-            <td><span class="num-badge coord">{total_coords}</span></td>
+            <td>{_badge(uk_today, 'new')}</td>
+            <td>{_badge(uk_history, 'hist')}</td>
+            <td>{_badge(uk_total, 'tot')}</td>
+            <td>{_badge(uk_coords, 'coord')}</td>
+            {_bar_cell(uk_total, '#0066cc')}
+        </tr>
+        <!-- 合計列 -->
+        <tr class="row-total">
+            <td><span class="total-label">📈 合計</span></td>
+            <td>{_badge(len(today_warnings), 'new')}</td>
+            <td>{_badge(len(history_warnings), 'hist')}</td>
+            <td>{_badge(total_count, 'tot')}</td>
+            <td>{_badge(total_coords, 'coord')}</td>
             <td><span style="font-size:13px;font-weight:700;color:#2d3748;">100%</span></td>
-            </tr>
+        </tr>
+    </tbody>
+    </table>
+</div>
 
-        </tbody>
-        </table>
-    </div>
-    <!-- ══ 來源統計總覽表 結束 ══ -->
+<!-- ══ 主要內容 ══ -->
+<div class="content-area">
+"""
 
-    <!-- ══ 主要內容 ══ -->
-    <div class="content-area">
-    """
-
-            # ── 渲染函式 ──
+        # ── 渲染函式（與 _generate_html_report 同層縮排）──
         def _render_warnings(warnings_list, is_today):
             result = ""
             for idx, w in enumerate(warnings_list, 1):
@@ -843,60 +919,65 @@ class GmailRelayNotifier:
                 # UKMTO 通告內容
                 details_html = ""
                 if source == "UKMTO" and w.get('details'):
-                    details_html = f'<div class="details-block"><strong>📄 通告內容：</strong><br>{w["details"]}</div>'
+                    details_html = (
+                        f'<div class="details-block">'
+                        f'<strong>📄 通告內容：</strong><br>{w["details"]}'
+                        f'</div>'
+                    )
 
                 kw     = w.get('keywords', [])
                 kw_str = ', '.join(kw) if isinstance(kw, list) else str(kw)
+                ukmto_tag = '<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''
 
                 if is_today:
                     result += f"""
-    <div class="warning-card-today">
+<div class="warning-card-today">
     <div class="card-header-today">
         <div class="card-index-today">{idx}</div>
-        <div class="card-title-today">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
+        <div class="card-title-today">{icon} {w.get('title', 'N/A')}{ukmto_tag}</div>
         <span class="new-tag">NEW</span>
     </div>
     <div class="card-body">
         <div class="meta-row">
-        <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
-        <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
-        <span class="meta-chip kw">🔑 {kw_str}</span>
-        {level_chip}
+            <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
+            <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
+            <span class="meta-chip kw">🔑 {kw_str}</span>
+            {level_chip}
         </div>
         {details_html}
         {coord_html}
         <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
     </div>
-    </div>"""
+</div>"""
                 else:
                     result += f"""
-    <div class="warning-card-history">
+<div class="warning-card-history">
     <div class="card-header-history">
         <div class="card-index-history">{idx}</div>
-        <div class="card-title-history">{icon} {w.get('title', 'N/A')}{'<span class="source-tag">UKMTO</span>' if source == 'UKMTO' else ''}</div>
+        <div class="card-title-history">{icon} {w.get('title', 'N/A')}{ukmto_tag}</div>
     </div>
     <div class="card-body">
         <div class="meta-row">
-        <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
-        <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
-        <span class="meta-chip kw">🔑 {kw_str}</span>
-        {level_chip}
+            <span class="meta-chip unit">📋 {w.get('bureau', 'N/A')}</span>
+            <span class="meta-chip time">📅 {w.get('time', 'N/A')}</span>
+            <span class="meta-chip kw">🔑 {kw_str}</span>
+            {level_chip}
         </div>
         {details_html}
         {coord_html}
         <a class="view-link" href="{w.get('link', '#')}" target="_blank">🔗 查看詳情 →</a>
     </div>
-    </div>"""
+</div>"""
             return result
 
         # ── 今日新增區段 ──
         if today_warnings:
             html += f"""
-    <div class="section-header-today">
+<div class="section-header-today">
     <span style="font-size:20px;">🚨</span>
     <h2 class="section-title">今日新增航行警告</h2>
     <span class="section-count today-count">{len(today_warnings)} 筆</span>
-    </div>
+</div>
 """
             html += _render_warnings(today_warnings, is_today=True)
 
@@ -906,11 +987,11 @@ class GmailRelayNotifier:
         # ── 歷史資料區段 ──
         if history_warnings:
             html += f"""
-    <div class="section-header-history">
+<div class="section-header-history">
     <span style="font-size:20px;">📚</span>
     <h2 class="section-title">過往航行警告（歷史資料）</h2>
     <span class="section-count history-count">{len(history_warnings)} 筆</span>
-    </div>
+</div>
 """
             html += _render_warnings(history_warnings, is_today=False)
 
@@ -926,7 +1007,6 @@ class GmailRelayNotifier:
 </body>
 </html>"""
         return html
-
 
 
 # ==================== 5. UKMTO 爬蟲 (v3.1 - 座標從 __NEXT_DATA__ 讀取) ====================
@@ -964,8 +1044,6 @@ class UKMTOScraper:
         self.captured_warnings_today   = []
         self.captured_warnings_history = []
 
-        # 用來快取從 __NEXT_DATA__ 解析出的座標 dict
-        # key = incident id (str)，value = (lat, lon)
         self._next_data_coords: dict = {}
 
         print(f"  🇬🇧 UKMTO 爬蟲設定:")
@@ -978,9 +1056,6 @@ class UKMTOScraper:
         self.wait   = WebDriverWait(self.driver, 20)
         print("  ✅ WebDriver 啟動成功 (UKMTO)")
 
-    # ------------------------------------------------------------------
-    # WebDriver
-    # ------------------------------------------------------------------
     def _init_driver(self) -> webdriver.Chrome:
         options = webdriver.ChromeOptions()
         options.add_argument("--headless=new")
@@ -1028,20 +1103,7 @@ class UKMTOScraper:
             print(f"  ⚠️  webdriver_manager 失敗: {e}")
         return None
 
-    # ------------------------------------------------------------------
-    # ★ 核心新增：從 __NEXT_DATA__ 提取所有事件座標
-    # ------------------------------------------------------------------
     def _extract_coords_from_next_data(self) -> dict:
-        """
-        從頁面的 <script id="__NEXT_DATA__"> 提取所有事件的精確座標。
-
-        UKMTO Next.js 資料結構（常見路徑，依優先順序嘗試）：
-          props.pageProps.incidents[].latitude / .longitude
-          props.pageProps.data.incidents[].lat / .lng
-          props.pageProps.initialData[].position.lat / .lng
-
-        回傳: { incident_id_str: (lat, lon), ... }
-        """
         coord_map = {}
         try:
             script_el = self.driver.find_element(By.ID, "__NEXT_DATA__")
@@ -1049,21 +1111,16 @@ class UKMTOScraper:
             data      = json.loads(raw)
             print("  ✅ 成功讀取 __NEXT_DATA__")
 
-            # ── 嘗試多種已知路徑 ──
             page_props = data.get("props", {}).get("pageProps", {})
 
-            # 路徑候選清單（(incidents_list, id_key, lat_key, lon_key)）
             candidates = [
-                # 路徑 A：直接 incidents 陣列
-                (page_props.get("incidents", []),   "id",  "latitude",  "longitude"),
-                (page_props.get("incidents", []),   "id",  "lat",       "lng"),
-                (page_props.get("incidents", []),   "_id", "latitude",  "longitude"),
-                # 路徑 B：data.incidents
-                (page_props.get("data", {}).get("incidents", []), "id",  "latitude",  "longitude"),
-                (page_props.get("data", {}).get("incidents", []), "id",  "lat",       "lng"),
-                # 路徑 C：initialData
-                (page_props.get("initialData", []), "id",  "latitude",  "longitude"),
-                (page_props.get("initialData", []), "id",  "lat",       "lng"),
+                (page_props.get("incidents", []),                         "id",  "latitude",  "longitude"),
+                (page_props.get("incidents", []),                         "id",  "lat",       "lng"),
+                (page_props.get("incidents", []),                         "_id", "latitude",  "longitude"),
+                (page_props.get("data", {}).get("incidents", []),         "id",  "latitude",  "longitude"),
+                (page_props.get("data", {}).get("incidents", []),         "id",  "lat",       "lng"),
+                (page_props.get("initialData", []),                       "id",  "latitude",  "longitude"),
+                (page_props.get("initialData", []),                       "id",  "lat",       "lng"),
             ]
 
             for incidents, id_key, lat_key, lon_key in candidates:
@@ -1075,7 +1132,6 @@ class UKMTOScraper:
                         lat    = inc.get(lat_key)
                         lon    = inc.get(lon_key)
 
-                        # 有些資料把座標包在 position / location 子物件內
                         if lat is None or lon is None:
                             pos = inc.get("position") or inc.get("location") or inc.get("coordinates") or {}
                             if isinstance(pos, dict):
@@ -1096,7 +1152,6 @@ class UKMTOScraper:
                     print(f"  📡 __NEXT_DATA__ 共解析到 {len(coord_map)} 筆座標")
                     return coord_map
 
-            # ── 若標準路徑都沒找到，做遞迴搜尋（最後手段）──
             if not coord_map:
                 print("  ⚠️  標準路徑未找到座標，嘗試遞迴搜尋 __NEXT_DATA__...")
                 coord_map = self._deep_search_coords(data)
@@ -1138,9 +1193,6 @@ class UKMTOScraper:
 
         return result
 
-    # ------------------------------------------------------------------
-    # ★ 備用方案：_next/data/ API（不需要 JS 執行）
-    # ------------------------------------------------------------------
     def _fetch_coords_from_next_api(self) -> dict:
         """
         嘗試透過 Next.js 的 _next/data/{buildId}/recent-incidents.json 端點取得座標。
@@ -1154,10 +1206,14 @@ class UKMTOScraper:
             if not build_id:
                 return coord_map
 
-            api_url  = f"https://www.ukmto.org/_next/data/{build_id}/recent-incidents.json"
+            api_url = f"https://www.ukmto.org/_next/data/{build_id}/recent-incidents.json"
             print(f"  🔄 嘗試 _next/data API: {api_url}")
-            resp = requests.get(api_url, timeout=15, verify=False,
-                                headers={"User-Agent": "Mozilla/5.0"})
+            resp = requests.get(
+                api_url,
+                timeout=15,
+                verify=False,
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
             if resp.status_code == 200:
                 api_data   = resp.json()
                 page_props = api_data.get("pageProps", {})
@@ -1181,9 +1237,6 @@ class UKMTOScraper:
             print(f"  ⚠️  _next/data API 失敗: {e}")
         return coord_map
 
-    # ------------------------------------------------------------------
-    # 日期解析
-    # ------------------------------------------------------------------
     def _parse_date(self, date_str: str) -> datetime | None:
         parts = date_str.strip().split()
         if len(parts) != 3:
@@ -1198,9 +1251,6 @@ class UKMTOScraper:
         except (ValueError, TypeError):
             return None
 
-    # ------------------------------------------------------------------
-    # 主要爬取流程
-    # ------------------------------------------------------------------
     def scrape(self):
         print(f"\n🇬🇧 開始爬取 UKMTO 航行警告...")
         print(f"  🌐 目標網址: {self.URL}")
@@ -1254,7 +1304,7 @@ class UKMTOScraper:
             try:
                 self.driver.quit()
                 print("  🔒 WebDriver 已關閉 (UKMTO)")
-            except:
+            except Exception:
                 pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
@@ -1265,32 +1315,38 @@ class UKMTOScraper:
 
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
-    # ------------------------------------------------------------------
-    # 處理單一事件
-    # ------------------------------------------------------------------
     def _process_incident(self, elem):
         # ── 基本欄位 ──
         incident_id = elem.get_attribute("id") or ""
 
         try:
-            title = elem.find_element(By.CSS_SELECTOR, "h3.IncidentList_title__cOmOY button").text.strip()
+            title = elem.find_element(
+                By.CSS_SELECTOR, "h3.IncidentList_title__cOmOY button"
+            ).text.strip()
         except Exception:
             title = "N/A"
 
         try:
-            colour = elem.find_element(By.CSS_SELECTOR, "span.Pin_pin__dpf_F").get_attribute("data-colour") or "N/A"
+            colour = (
+                elem.find_element(By.CSS_SELECTOR, "span.Pin_pin__dpf_F")
+                    .get_attribute("data-colour") or "N/A"
+            )
         except Exception:
             colour = "N/A"
 
         try:
-            date_str      = elem.find_element(By.CSS_SELECTOR, "ul.IncidentList_meta__JmhSj li span").text.strip()
+            date_str      = elem.find_element(
+                By.CSS_SELECTOR, "ul.IncidentList_meta__JmhSj li span"
+            ).text.strip()
             incident_date = self._parse_date(date_str)
         except Exception:
             date_str      = "N/A"
             incident_date = None
 
         try:
-            details = elem.find_element(By.CSS_SELECTOR, "p.IncidentList_details__bwUAz").text.strip()
+            details = elem.find_element(
+                By.CSS_SELECTOR, "p.IncidentList_details__bwUAz"
+            ).text.strip()
         except Exception:
             details = "N/A"
 
@@ -1306,7 +1362,7 @@ class UKMTOScraper:
         colour_icon = "🔴" if colour == "Red" else "🟡"
         print(f"  {time_label} {colour_icon} [{date_str}] {title}")
 
-        # ── ★ 座標取得（三層優先順序）──
+        # ── 座標取得（三層優先順序）──
         coordinates  = []
         coord_source = "none"
 
@@ -1319,7 +1375,7 @@ class UKMTOScraper:
             lon_dir      = 'E' if lon >= 0 else 'W'
             print(f"    📡 __NEXT_DATA__ 座標: {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}")
 
-        # 優先 2：若 id 對不上，嘗試用標題模糊比對（UKMTO id 有時帶 # 前綴）
+        # 優先 2：id 模糊比對
         if not coordinates and self._next_data_coords:
             clean_id = incident_id.lstrip('#').strip()
             for key, coord in self._next_data_coords.items():
@@ -1340,7 +1396,10 @@ class UKMTOScraper:
                 print(f"    ℹ️  無座標資訊")
 
         # ── 關鍵字比對 ──
-        matched_keywords = [k for k in self.keywords if k.lower() in (title + " " + details).lower()]
+        matched_keywords = [
+            k for k in self.keywords
+            if k.lower() in (title + " " + details).lower()
+        ]
         if not matched_keywords:
             matched_keywords = ["UKMTO"]
 
@@ -1364,8 +1423,8 @@ class UKMTOScraper:
                 'source':       'UKMTO',
                 'colour':       colour,
                 'coordinates':  coordinates,
-                'coord_source': coord_source,   # ← 新增：讓 Email 顯示座標來源標籤
-                'details':      details,          # ← 新增這行
+                'coord_source': coord_source,
+                'details':      details,
             }
             if is_today:
                 self.new_warnings_today.append(w_id)
@@ -1389,8 +1448,11 @@ class TWMaritimePortBureauScraper:
         self.coord_extractor = coord_extractor
         self.base_url        = "https://www.motcmpb.gov.tw/Information/Notice?SiteId=1&NodeId=483"
         self.days            = days
-        self.cutoff_date     = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days)
-        self.today_start     = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        self.cutoff_date     = (
+            datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=days)
+        )
+        self.today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
         self.new_warnings_today        = []
         self.new_warnings_history      = []
@@ -1408,8 +1470,13 @@ class TWMaritimePortBureauScraper:
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        options.add_experimental_option('prefs', {'profile.default_content_setting_values.notifications': 2})
+        options.add_argument(
+            'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+        options.add_experimental_option(
+            'prefs', {'profile.default_content_setting_values.notifications': 2}
+        )
         options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
         options.add_experimental_option('useAutomationExtension', False)
 
@@ -1422,10 +1489,12 @@ class TWMaritimePortBureauScraper:
             self.wait = WebDriverWait(self.driver, 20)
             print("  ✅ WebDriver 啟動成功 (台灣航港局)")
         except Exception as e:
-            print(f"  ❌ WebDriver 啟動失敗: {e}"); raise
+            print(f"  ❌ WebDriver 啟動失敗: {e}")
+            raise
 
     def check_keywords(self, text):
-        if not text: return []
+        if not text:
+            return []
         matched = [k for k in self.keywords if k.lower() in text.lower()]
         for kw in ['礙航', '射擊']:
             if kw in text and kw not in matched:
@@ -1437,24 +1506,31 @@ class TWMaritimePortBureauScraper:
             m = re.match(r'^(\d{2,4})[/-](\d{1,2})[/-](\d{1,2})$', date_string.strip())
             if m:
                 y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                if y < 1000: y += 1911
+                if y < 1000:
+                    y += 1911
                 return datetime(y, mo, d)
         except Exception:
             pass
         return None
 
     def is_within_date_range(self, date_string):
-        if not date_string: return None, False
+        if not date_string:
+            return None, False
         pd = self.parse_date(date_string)
         if pd:
-            if pd < self.cutoff_date: return None, False
+            if pd < self.cutoff_date:
+                return None, False
             return pd, pd >= self.today_start
         return None, False
 
     def click_category_tab(self, category_id):
         try:
             self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.tabs a")))
-            tab_xpath = f"//div[@class='tabs']//a[@data-val='{category_id}']" if category_id else "//div[@class='tabs']//a[@class='active']"
+            tab_xpath = (
+                f"//div[@class='tabs']//a[@data-val='{category_id}']"
+                if category_id
+                else "//div[@class='tabs']//a[@class='active']"
+            )
             tab = self.wait.until(EC.element_to_be_clickable((By.XPATH, tab_xpath)))
             self.driver.execute_script("arguments[0].scrollIntoView(true);", tab)
             time.sleep(0.5)
@@ -1462,11 +1538,15 @@ class TWMaritimePortBureauScraper:
             time.sleep(3)
             return True
         except Exception as e:
-            print(f"    ⚠️ 點擊分類標籤失敗: {e}"); return False
+            print(f"    ⚠️ 點擊分類標籤失敗: {e}")
+            return False
 
     def get_notices_selenium(self, page=1, base_category_id=None):
         try:
-            category_name = self.target_categories.get(base_category_id, '全部') if base_category_id else '全部'
+            category_name = (
+                self.target_categories.get(base_category_id, '全部')
+                if base_category_id else '全部'
+            )
             print(f"  正在請求台灣航港局 [{category_name}] 第 {page} 頁...")
 
             if page == 1:
@@ -1476,35 +1556,46 @@ class TWMaritimePortBureauScraper:
                     return {'has_data': False, 'notices': [], 'processed': 0}
             else:
                 try:
-                    nb = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "li.next a")))
+                    nb = self.wait.until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "li.next a"))
+                    )
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", nb)
                     time.sleep(0.5)
                     self.driver.execute_script("arguments[0].click();", nb)
                     time.sleep(3)
                 except Exception as e:
-                    print(f"    ⚠️ 無法翻頁: {e}"); return {'has_data': False, 'notices': [], 'processed': 0}
+                    print(f"    ⚠️ 無法翻頁: {e}")
+                    return {'has_data': False, 'notices': [], 'processed': 0}
 
             try:
                 self.wait.until(EC.presence_of_element_located((By.ID, "table")))
                 self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#table dl")))
             except Exception as e:
-                print(f"    ⚠️ 等待內容載入超時: {e}"); return {'has_data': False, 'notices': [], 'processed': 0}
+                print(f"    ⚠️ 等待內容載入超時: {e}")
+                return {'has_data': False, 'notices': [], 'processed': 0}
 
             soup         = BeautifulSoup(self.driver.page_source, 'html.parser')
             table_div    = soup.find('div', id='table')
-            if not table_div: return {'has_data': False, 'notices': [], 'processed': 0}
+            if not table_div:
+                return {'has_data': False, 'notices': [], 'processed': 0}
             contents_div = table_div.find('div', class_='contents')
-            if not contents_div: return {'has_data': False, 'notices': [], 'processed': 0}
-            data_dl_list = [dl for dl in contents_div.find_all('dl') if 'con-title' not in dl.get('class', [])]
+            if not contents_div:
+                return {'has_data': False, 'notices': [], 'processed': 0}
+            data_dl_list = [
+                dl for dl in contents_div.find_all('dl')
+                if 'con-title' not in dl.get('class', [])
+            ]
             print(f"    📋 找到 {len(data_dl_list)} 個資料列")
-            if not data_dl_list: return {'has_data': False, 'notices': [], 'processed': 0}
+            if not data_dl_list:
+                return {'has_data': False, 'notices': [], 'processed': 0}
 
             processed_count = 0
             for idx, dl in enumerate(data_dl_list, 1):
                 try:
                     dt_list = dl.find_all('dt')
-                    dd = dl.find('dd')
-                    if len(dt_list) < 2 or not dd: continue
+                    dd      = dl.find('dd')
+                    if len(dt_list) < 2 or not dd:
+                        continue
                     processed_count += 1
                     date = dt_list[1].get_text(strip=True)
                     unit = dt_list[2].get_text(strip=True) if len(dt_list) > 2 else '台灣航港局'
@@ -1513,26 +1604,35 @@ class TWMaritimePortBureauScraper:
                         title = link_tag.get_text(strip=True)
                         link  = link_tag.get('href', '')
                         if link and not link.startswith('http'):
-                            link = f"https://www.motcmpb.gov.tw{link}" if link.startswith('/') else f"https://www.motcmpb.gov.tw/{link}"
+                            link = (
+                                f"https://www.motcmpb.gov.tw{link}"
+                                if link.startswith('/')
+                                else f"https://www.motcmpb.gov.tw/{link}"
+                            )
                     else:
-                        title = dd.get_text(strip=True); link = ''
+                        title = dd.get_text(strip=True)
+                        link  = ''
 
                     parsed_date, is_today = self.is_within_date_range(date)
-                    if parsed_date is None: continue
+                    if parsed_date is None:
+                        continue
 
                     matched_keywords = self.check_keywords(title)
-                    if not matched_keywords: continue
+                    if not matched_keywords:
+                        continue
 
-                    coordinates = []
+                    coordinates  = []
                     title_coords = self.coord_extractor.extract_coordinates(title)
-                    if title_coords: coordinates.extend(title_coords)
+                    if title_coords:
+                        coordinates.extend(title_coords)
 
                     if link:
                         try:
                             self.driver.execute_script("window.open('');")
                             self.driver.switch_to.window(self.driver.window_handles[1])
                             self.driver.set_page_load_timeout(10)
-                            self.driver.get(link); time.sleep(2)
+                            self.driver.get(link)
+                            time.sleep(2)
                             detail_soup = BeautifulSoup(self.driver.page_source, 'html.parser')
                             content_div = (
                                 detail_soup.find('div', class_='editor_Content') or
@@ -1542,7 +1642,9 @@ class TWMaritimePortBureauScraper:
                                 detail_soup.find('div', id='container')
                             )
                             if content_div:
-                                for pc in self.coord_extractor.extract_coordinates(content_div.get_text()):
+                                for pc in self.coord_extractor.extract_coordinates(
+                                    content_div.get_text()
+                                ):
                                     if pc not in coordinates:
                                         coordinates.append(pc)
                             self.driver.close()
@@ -1556,18 +1658,29 @@ class TWMaritimePortBureauScraper:
                                     self.driver.close()
                                     self.driver.switch_to.window(self.driver.window_handles[0])
                                     self.driver.set_page_load_timeout(60)
-                            except:
+                            except Exception:
                                 pass
 
-                    db_data = (unit, title, link, date, ', '.join(matched_keywords), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), coordinates)
+                    db_data = (
+                        unit, title, link, date,
+                        ', '.join(matched_keywords),
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        coordinates
+                    )
                     is_new, w_id = self.db_manager.save_warning(db_data, source_type="TW_MPB")
 
                     if is_new and w_id:
                         warning_data = {
-                            'id': w_id, 'bureau': unit, 'title': title, 'link': link,
-                            'time': date, 'keywords': matched_keywords,
-                            'source': 'TW_MPB', 'category': category_name,
-                            'coordinates': coordinates, 'coord_source': 'text'
+                            'id':          w_id,
+                            'bureau':      unit,
+                            'title':       title,
+                            'link':        link,
+                            'time':        date,
+                            'keywords':    matched_keywords,
+                            'source':      'TW_MPB',
+                            'category':    category_name,
+                            'coordinates': coordinates,
+                            'coord_source': 'text'
                         }
                         if is_today:
                             self.new_warnings_today.append(w_id)
@@ -1613,7 +1726,7 @@ class TWMaritimePortBureauScraper:
             try:
                 self.driver.quit()
                 print("  🔒 WebDriver 已關閉 (台灣航港局)")
-            except:
+            except Exception:
                 pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
@@ -1626,7 +1739,8 @@ class TWMaritimePortBureauScraper:
 
 # ==================== 7. 中國海事局爬蟲 ====================
 class CNMSANavigationWarningsScraper:
-    def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor, headless=True, days=3):
+    def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor,
+                 headless=True, days=3):
         self.db_manager      = db_manager
         self.keyword_manager = keyword_manager
         self.keywords        = keyword_manager.get_keywords()
@@ -1642,8 +1756,13 @@ class CNMSANavigationWarningsScraper:
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-        options.add_experimental_option('prefs', {'profile.managed_default_content_settings.images': 2})
+        options.add_argument(
+            'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36'
+        )
+        options.add_experimental_option(
+            'prefs', {'profile.managed_default_content_settings.images': 2}
+        )
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
         try:
@@ -1655,7 +1774,8 @@ class CNMSANavigationWarningsScraper:
             self.wait = WebDriverWait(self.driver, 15)
             print("  ✅ WebDriver 啟動成功")
         except Exception as e:
-            print(f"  ❌ WebDriver 啟動失敗: {e}"); raise
+            print(f"  ❌ WebDriver 啟動失敗: {e}")
+            raise
 
         self.days        = days
         self.cutoff_date = datetime.now() - timedelta(days=days)
@@ -1675,7 +1795,7 @@ class CNMSANavigationWarningsScraper:
         for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y年%m月%d日']:
             try:
                 return datetime.strptime(date_str.strip(), fmt)
-            except:
+            except Exception:
                 continue
         return None
 
@@ -1691,10 +1811,14 @@ class CNMSANavigationWarningsScraper:
                             By.XPATH,
                             f"//div[@class='nav_lv2_text' and contains(text(), '{bureau_name}')]"
                         )
-                    except:
-                        print(f"    ⚠️ 無法重新獲取元素: {bureau_name}"); break
+                    except Exception:
+                        print(f"    ⚠️ 無法重新獲取元素: {bureau_name}")
+                        break
 
-                self.driver.execute_script("arguments[0].scrollIntoView(true); arguments[0].click();", bureau_element)
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView(true); arguments[0].click();",
+                    bureau_element
+                )
                 time.sleep(2)
                 self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "right_main")))
 
@@ -1712,19 +1836,23 @@ class CNMSANavigationWarningsScraper:
                             title = item.get_attribute('title') or item.text.strip()
                             title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title)
                             if not title:
-                                processed_count += 1; continue
+                                processed_count += 1
+                                continue
 
                             matched = self.check_keywords(title)
                             if not matched:
-                                processed_count += 1; continue
+                                processed_count += 1
+                                continue
 
                             link = item.get_attribute('href') or ''
                             if link.startswith('/'):
                                 link = f"https://www.msa.gov.cn{link}"
 
                             try:
-                                publish_time = item.find_element(By.CSS_SELECTOR, ".time").text.strip()
-                            except:
+                                publish_time = item.find_element(
+                                    By.CSS_SELECTOR, ".time"
+                                ).text.strip()
+                            except Exception:
                                 m = re.search(r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}', item.text)
                                 publish_time = m.group() if m else ""
 
@@ -1732,16 +1860,19 @@ class CNMSANavigationWarningsScraper:
                                 p_date = self.parse_date(publish_time)
                                 if p_date:
                                     if p_date < self.cutoff_date:
-                                        processed_count += 1; continue
+                                        processed_count += 1
+                                        continue
                                     is_today   = p_date >= self.today_start
                                     time_label = "🆕 今日" if is_today else "📚 歷史"
                                     print(f"      {time_label} 資料: {publish_time}")
                                 else:
-                                    processed_count += 1; continue
+                                    processed_count += 1
+                                    continue
                             else:
-                                processed_count += 1; continue
+                                processed_count += 1
+                                continue
 
-                            coordinates = []
+                            coordinates  = []
                             title_coords = self.coord_extractor.extract_coordinates(title)
                             if title_coords:
                                 coordinates.extend(title_coords)
@@ -1752,8 +1883,11 @@ class CNMSANavigationWarningsScraper:
                                     self.driver.switch_to.window(self.driver.window_handles[-1])
                                     self.driver.set_page_load_timeout(10)
                                     try:
-                                        self.driver.get(link); time.sleep(1)
-                                        page_coords = self.coord_extractor.extract_from_html(self.driver.page_source)
+                                        self.driver.get(link)
+                                        time.sleep(1)
+                                        page_coords = self.coord_extractor.extract_from_html(
+                                            self.driver.page_source
+                                        )
                                         for pc in page_coords:
                                             if pc not in coordinates:
                                                 coordinates.append(pc)
@@ -1762,9 +1896,11 @@ class CNMSANavigationWarningsScraper:
                                     finally:
                                         try:
                                             self.driver.close()
-                                            self.driver.switch_to.window(self.driver.window_handles[0])
+                                            self.driver.switch_to.window(
+                                                self.driver.window_handles[0]
+                                            )
                                             self.driver.set_page_load_timeout(120)
-                                        except:
+                                        except Exception:
                                             pass
                                 except Exception as e:
                                     print(f"      ⚠️ 無法從網頁提取座標: {e}")
@@ -1775,13 +1911,20 @@ class CNMSANavigationWarningsScraper:
                                 datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                                 coordinates
                             )
-                            is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
+                            is_new, w_id = self.db_manager.save_warning(
+                                db_data, source_type="CN_MSA"
+                            )
 
                             if is_new and w_id:
                                 warning_data = {
-                                    'id': w_id, 'bureau': bureau_name, 'title': title,
-                                    'link': link, 'time': publish_time, 'keywords': matched,
-                                    'source': 'CN_MSA', 'coordinates': coordinates,
+                                    'id':          w_id,
+                                    'bureau':      bureau_name,
+                                    'title':       title,
+                                    'link':        link,
+                                    'time':        publish_time,
+                                    'keywords':    matched,
+                                    'source':      'CN_MSA',
+                                    'coordinates': coordinates,
                                     'coord_source': 'text'
                                 }
                                 if is_today:
@@ -1801,7 +1944,8 @@ class CNMSANavigationWarningsScraper:
                         processed_count += 1
 
                     except Exception as e:
-                        print(f"    ⚠️ 獲取項目列表時出錯: {e}"); break
+                        print(f"    ⚠️ 獲取項目列表時出錯: {e}")
+                        break
 
                 print(f"    ✅ {bureau_name} 處理完成，共 {processed_count} 個項目")
                 break
@@ -1818,13 +1962,19 @@ class CNMSANavigationWarningsScraper:
         try:
             self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
             time.sleep(5)
-            nav_btn = self.wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), '航行警告')]")))
+            nav_btn = self.wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//span[contains(text(), '航行警告')]")
+                )
+            )
             self.driver.execute_script("arguments[0].click();", nav_btn)
             time.sleep(3)
 
             bureaus = [
                 b.text.strip()
-                for b in self.driver.find_elements(By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text")
+                for b in self.driver.find_elements(
+                    By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text"
+                )
                 if b.text.strip()
             ]
             print(f"  📍 找到 {len(bureaus)} 個海事局")
@@ -1838,15 +1988,17 @@ class CNMSANavigationWarningsScraper:
                     self.scrape_bureau_warnings(b_name, elem)
                     time.sleep(1)
                 except Exception as e:
-                    print(f"    ⚠️ 跳過 {b_name}: {e}"); continue
+                    print(f"    ⚠️ 跳過 {b_name}: {e}")
+                    continue
 
         except Exception as e:
-            print(f"❌ 中國海事局爬取錯誤: {e}"); traceback.print_exc()
+            print(f"❌ 中國海事局爬取錯誤: {e}")
+            traceback.print_exc()
         finally:
             try:
                 self.driver.quit()
                 print("  🔒 WebDriver 已關閉 (中國海事局)")
-            except:
+            except Exception:
                 pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
@@ -1883,23 +2035,28 @@ ENABLE_UKMTO               = os.getenv("ENABLE_UKMTO",   "true").lower() == "tru
 SCRAPE_DAYS                = int(os.getenv("SCRAPE_DAYS",       "3"))
 UKMTO_SCRAPE_DAYS          = int(os.getenv("UKMTO_SCRAPE_DAYS", "30"))
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("⚙️  系統設定檢查")
-print("="*70)
+print("=" * 70)
 print(f"📧 Email 通知: {'✅ 啟用' if ENABLE_EMAIL_NOTIFICATIONS and MAIL_USER else '❌ 停用'}")
 print(f"📢 Teams 通知: {'✅ 啟用' if ENABLE_TEAMS_NOTIFICATIONS and TEAMS_WEBHOOK else '❌ 停用'}")
 print(f"💾 資料庫: {DB_FILE_PATH}")
 print(f"📅 抓取範圍: CN/TW 最近 {SCRAPE_DAYS} 天 | UKMTO 最近 {UKMTO_SCRAPE_DAYS} 天")
-print(f"🔍 資料來源: CN_MSA={'✅' if ENABLE_CN_MSA else '❌'} | TW_MPB={'✅' if ENABLE_TW_MPB else '❌'} | UKMTO={'✅' if ENABLE_UKMTO else '❌'}")
-print("="*70 + "\n")
+print(
+    f"🔍 資料來源: "
+    f"CN_MSA={'✅' if ENABLE_CN_MSA else '❌'} | "
+    f"TW_MPB={'✅' if ENABLE_TW_MPB else '❌'} | "
+    f"UKMTO={'✅' if ENABLE_UKMTO else '❌'}"
+)
+print("=" * 70 + "\n")
 
 
 # ==================== 9. 主程式進入點 ====================
 if __name__ == "__main__":
     try:
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("🌊 海事警告監控系統啟動 v3.1")
-        print("="*70)
+        print("=" * 70)
 
         print("\n📦 初始化資料庫...")
         db_manager = DatabaseManager(db_name=DB_FILE_PATH)
@@ -1928,32 +2085,39 @@ if __name__ == "__main__":
         if ENABLE_CN_MSA:
             print("🇨🇳 初始化中國海事局爬蟲...")
             cn_scraper = CNMSANavigationWarningsScraper(
-                db_manager=db_manager, keyword_manager=keyword_manager,
-                teams_notifier=teams_notifier, coord_extractor=coord_extractor,
-                headless=CHROME_HEADLESS, days=SCRAPE_DAYS
+                db_manager=db_manager,
+                keyword_manager=keyword_manager,
+                teams_notifier=teams_notifier,
+                coord_extractor=coord_extractor,
+                headless=CHROME_HEADLESS,
+                days=SCRAPE_DAYS
             )
 
         if ENABLE_TW_MPB:
             print("🇹🇼 初始化台灣航港局爬蟲...")
             tw_scraper = TWMaritimePortBureauScraper(
-                db_manager=db_manager, keyword_manager=keyword_manager,
-                teams_notifier=teams_notifier, coord_extractor=coord_extractor,
+                db_manager=db_manager,
+                keyword_manager=keyword_manager,
+                teams_notifier=teams_notifier,
+                coord_extractor=coord_extractor,
                 days=SCRAPE_DAYS
             )
 
         if ENABLE_UKMTO:
             print("🇬🇧 初始化 UKMTO 爬蟲...")
             ukmto_scraper = UKMTOScraper(
-                db_manager=db_manager, keyword_manager=keyword_manager,
-                teams_notifier=teams_notifier, coord_extractor=coord_extractor,
+                db_manager=db_manager,
+                keyword_manager=keyword_manager,
+                teams_notifier=teams_notifier,
+                coord_extractor=coord_extractor,
                 days=UKMTO_SCRAPE_DAYS
             )
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("✅ 所有模組初始化完成")
-        print("="*70)
+        print("=" * 70)
 
-        # ========== 開始爬取 ==========
+        # ── 開始爬取 ──
         print("\n🚀 開始爬取海事警告...")
 
         all_warnings_today   = []
@@ -1982,11 +2146,14 @@ if __name__ == "__main__":
             all_captured_today.extend(ukmto_scraper.captured_warnings_today)
             all_captured_history.extend(ukmto_scraper.captured_warnings_history)
 
-        # ========== 發送通知 ==========
+        # ── 發送通知 ──
         total_warnings = len(all_warnings_today) + len(all_warnings_history)
 
         if total_warnings > 0:
-            print(f"\n📢 發現 {total_warnings} 個警告 (今日 {len(all_warnings_today)} 筆，歷史 {len(all_warnings_history)} 筆)")
+            print(
+                f"\n📢 發現 {total_warnings} 個警告 "
+                f"(今日 {len(all_warnings_today)} 筆，歷史 {len(all_warnings_history)} 筆)"
+            )
 
             if teams_notifier and ENABLE_TEAMS_NOTIFICATIONS:
 
@@ -1999,7 +2166,7 @@ if __name__ == "__main__":
                         w.get('link'),
                         w.get('time'),
                         ', '.join(w.get('keywords', [])) if isinstance(w.get('keywords'), list) else w.get('keywords', ''),
-                        w.get('details', ''),             # ← 原本是 ''，現在帶入 details
+                        w.get('details', ''),
                         json.dumps(w.get('coordinates', []))
                     )
 
@@ -2026,23 +2193,29 @@ if __name__ == "__main__":
         else:
             print("\n✅ 沒有新的警告")
 
-        # ========== 執行摘要 ==========
-        print("\n" + "="*70)
+        # ── 執行摘要 ──
+        print("\n" + "=" * 70)
         print("📊 執行摘要")
-        print("="*70)
+        print("=" * 70)
 
-        for src, icon in [("CN_MSA", "🇨🇳 中國海事局"), ("TW_MPB", "🇹🇼 台灣航港局"), ("UKMTO", "🇬🇧 UKMTO")]:
+        for src, icon in [
+            ("CN_MSA", "🇨🇳 中國海事局"),
+            ("TW_MPB", "🇹🇼 台灣航港局"),
+            ("UKMTO",  "🇬🇧 UKMTO")
+        ]:
             t_count  = len([w for w in all_captured_today   if w.get('source') == src])
             h_count  = len([w for w in all_captured_history if w.get('source') == src])
             t_coords = sum(len(w.get('coordinates', [])) for w in all_captured_today   if w.get('source') == src)
             h_coords = sum(len(w.get('coordinates', [])) for w in all_captured_history if w.get('source') == src)
 
-            # UKMTO 額外顯示座標來源統計
             if src == "UKMTO":
-                all_ukmto = [w for w in all_captured_today + all_captured_history if w.get('source') == 'UKMTO']
-                nd_count  = len([w for w in all_ukmto if w.get('coord_source') == 'next_data'])
-                tx_count  = len([w for w in all_ukmto if w.get('coord_source') == 'text'])
-                no_count  = len([w for w in all_ukmto if w.get('coord_source') == 'none'])
+                all_ukmto = [
+                    w for w in all_captured_today + all_captured_history
+                    if w.get('source') == 'UKMTO'
+                ]
+                nd_count = len([w for w in all_ukmto if w.get('coord_source') == 'next_data'])
+                tx_count = len([w for w in all_ukmto if w.get('coord_source') == 'text'])
+                no_count = len([w for w in all_ukmto if w.get('coord_source') == 'none'])
                 print(f"\n  {icon}:")
                 print(f"     🆕 今日新增: {t_count} 筆 ({t_coords} 個座標點)")
                 print(f"     📚 歷史資料: {h_count} 筆 ({h_coords} 個座標點)")
@@ -2052,16 +2225,19 @@ if __name__ == "__main__":
                 print(f"     🆕 今日新增: {t_count} 筆 ({t_coords} 個座標點)")
                 print(f"     📚 歷史資料: {h_count} 筆 ({h_coords} 個座標點)")
 
-        total_coords = sum(len(w.get('coordinates', [])) for w in all_captured_today + all_captured_history)
+        total_coords = sum(
+            len(w.get('coordinates', []))
+            for w in all_captured_today + all_captured_history
+        )
         print(f"\n  📈 總計: {total_warnings} 筆警告")
         print(f"  📍 總座標點數: {total_coords}")
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         db_manager.print_statistics()
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("🎉 系統執行完成 v3.1")
-        print("="*70)
+        print("=" * 70)
 
     except KeyboardInterrupt:
         print("\n\n⚠️ 使用者中斷執行")
