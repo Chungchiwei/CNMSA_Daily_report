@@ -441,110 +441,110 @@ class GmailRelayNotifier:
     def _source_icon(self, source):
         return {"TW_MPB": "🇹🇼", "UKMTO": "🇬🇧"}.get(source, "🇨🇳")
 
-def _generate_html_report(self, today_warnings, history_warnings):
-    total_count = len(today_warnings) + len(history_warnings)
-    tpe_now     = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
+    def _generate_html_report(self, today_warnings, history_warnings):
+        total_count = len(today_warnings) + len(history_warnings)
+        tpe_now     = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
 
-    # ── 各來源統計 ──
-    cn_today   = len([w for w in today_warnings   if w.get('source') == 'CN_MSA'])
-    tw_today   = len([w for w in today_warnings   if w.get('source') == 'TW_MPB'])
-    uk_today   = len([w for w in today_warnings   if w.get('source') == 'UKMTO'])
-    cn_history = len([w for w in history_warnings if w.get('source') == 'CN_MSA'])
-    tw_history = len([w for w in history_warnings if w.get('source') == 'TW_MPB'])
-    uk_history = len([w for w in history_warnings if w.get('source') == 'UKMTO'])
-    cn_total   = cn_today + cn_history
-    tw_total   = tw_today + tw_history
-    uk_total   = uk_today + uk_history
+        # ── 各來源統計 ──
+        cn_today   = len([w for w in today_warnings   if w.get('source') == 'CN_MSA'])
+        tw_today   = len([w for w in today_warnings   if w.get('source') == 'TW_MPB'])
+        uk_today   = len([w for w in today_warnings   if w.get('source') == 'UKMTO'])
+        cn_history = len([w for w in history_warnings if w.get('source') == 'CN_MSA'])
+        tw_history = len([w for w in history_warnings if w.get('source') == 'TW_MPB'])
+        uk_history = len([w for w in history_warnings if w.get('source') == 'UKMTO'])
+        cn_total   = cn_today + cn_history
+        tw_total   = tw_today + tw_history
+        uk_total   = uk_today + uk_history
 
-    cn_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'CN_MSA')
-    tw_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'TW_MPB')
-    uk_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'UKMTO')
-    total_coords = cn_coords + tw_coords + uk_coords
+        cn_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'CN_MSA')
+        tw_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'TW_MPB')
+        uk_coords    = sum(len(w.get('coordinates', [])) for w in today_warnings + history_warnings if w.get('source') == 'UKMTO')
+        total_coords = cn_coords + tw_coords + uk_coords
 
-    # ── 修正①：順序改為 UK → CN → TW ──
-    sources_summary = []
-    if uk_today: sources_summary.append(f"🇬🇧 UKMTO {uk_today} 筆")
-    if cn_today: sources_summary.append(f"🇨🇳 中國海事局 {cn_today} 筆")
-    if tw_today: sources_summary.append(f"🇹🇼 台灣航港局 {tw_today} 筆")
-    sources_text = "　|　".join(sources_summary) if sources_summary else "無新增"
+        # ── 順序改為 UK → CN → TW ──
+        sources_summary = []
+        if uk_today: sources_summary.append(f"🇬🇧 UKMTO {uk_today} 筆")
+        if cn_today: sources_summary.append(f"🇨🇳 中國海事局 {cn_today} 筆")
+        if tw_today: sources_summary.append(f"🇹🇼 台灣航港局 {tw_today} 筆")
+        sources_text = "　|　".join(sources_summary) if sources_summary else "無新增"
 
-    # ── 修正②：排序函式定義在方法內部 ──
-    SOURCE_ORDER = {'UKMTO': 0, 'CN_MSA': 1, 'TW_MPB': 2}
+        # ── 排序函式定義在方法內部 ──
+        SOURCE_ORDER = {'UKMTO': 0, 'CN_MSA': 1, 'TW_MPB': 2}
 
-    def _sort_warnings(warnings_list):
-        return sorted(warnings_list, key=lambda w: SOURCE_ORDER.get(w.get('source', ''), 99))
+        def _sort_warnings(warnings_list):
+            return sorted(warnings_list, key=lambda w: SOURCE_ORDER.get(w.get('source', ''), 99))
 
-    # ── 渲染警告卡片（inline style 版）──
-    def _render_warnings(warnings_list, is_today):
-        result = ""
-        for idx, w in enumerate(warnings_list, 1):
-            source = w.get('source', '')
-            icon   = self._source_icon(source)
-            coords = w.get('coordinates', [])
+        # ── 渲染警告卡片（inline style 版）──
+        def _render_warnings(warnings_list, is_today):
+            result = ""
+            for idx, w in enumerate(warnings_list, 1):
+                source = w.get('source', '')
+                icon   = self._source_icon(source)
+                coords = w.get('coordinates', [])
 
-            coord_html = ""
-            if coords:
-                coord_source = w.get('coord_source', 'text')
-                source_label_map = {
-                    'next_data': '📡 來源：__NEXT_DATA__ (精確)',
-                    'text':      '📝 來源：文字解析',
-                    'fallback':  '🔄 來源：Fallback 解析',
-                }
-                source_label = source_label_map.get(coord_source, '📍 座標資訊')
-                coord_rows = ""
-                for i, pt in enumerate(coords, 1):
-                    lat, lon = pt[0], pt[1]
-                    lat_dir  = 'N' if lat >= 0 else 'S'
-                    lon_dir  = 'E' if lon >= 0 else 'W'
-                    maps_url = f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
-                    coord_rows += (
-                        f'<div style="margin:4px 0;color:#2d3748;font-family:Courier New,monospace;font-size:12px;">'
-                        f'📍 {i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}'
-                        f'&nbsp;<a href="{maps_url}" style="font-size:11px;color:#3182ce;text-decoration:none;" target="_blank">🗺️ 地圖</a>'
+                coord_html = ""
+                if coords:
+                    coord_source = w.get('coord_source', 'text')
+                    source_label_map = {
+                        'next_data': '📡 來源：__NEXT_DATA__ (精確)',
+                        'text':      '📝 來源：文字解析',
+                        'fallback':  '🔄 來源：Fallback 解析',
+                    }
+                    source_label = source_label_map.get(coord_source, '📍 座標資訊')
+                    coord_rows = ""
+                    for i, pt in enumerate(coords, 1):
+                        lat, lon = pt[0], pt[1]
+                        lat_dir  = 'N' if lat >= 0 else 'S'
+                        lon_dir  = 'E' if lon >= 0 else 'W'
+                        maps_url = f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
+                        coord_rows += (
+                            f'<div style="margin:4px 0;color:#2d3748;font-family:Courier New,monospace;font-size:12px;">'
+                            f'📍 {i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}'
+                            f'&nbsp;<a href="{maps_url}" style="font-size:11px;color:#3182ce;text-decoration:none;" target="_blank">🗺️ 地圖</a>'
+                            f'</div>'
+                        )
+                    coord_html = (
+                        f'<div style="background:#ebf8ff;border:1px solid #bee3f8;border-radius:6px;'
+                        f'padding:10px 14px;margin-top:10px;">'
+                        f'<div style="font-weight:700;color:#2b6cb0;font-size:12px;margin-bottom:6px;">{source_label}</div>'
+                        f'{coord_rows}'
                         f'</div>'
                     )
-                coord_html = (
-                    f'<div style="background:#ebf8ff;border:1px solid #bee3f8;border-radius:6px;'
-                    f'padding:10px 14px;margin-top:10px;">'
-                    f'<div style="font-weight:700;color:#2b6cb0;font-size:12px;margin-bottom:6px;">{source_label}</div>'
-                    f'{coord_rows}'
-                    f'</div>'
+
+                level_chip = ""
+                if source == "UKMTO":
+                    colour      = w.get('colour', '')
+                    colour_icon = "🔴" if colour == "Red" else "🟡"
+                    bg_col      = "#ffebee" if colour == "Red" else "#fff8e1"
+                    txt_col     = "#c62828" if colour == "Red" else "#f57f17"
+                    bd_col      = "#ef9a9a" if colour == "Red" else "#ffe082"
+                    level_chip  = (
+                        f'<span style="font-size:12px;padding:3px 9px;border-radius:4px;'
+                        f'background:{bg_col};color:{txt_col};border:1px solid {bd_col};">'
+                        f'{colour_icon} {colour}</span>'
+                    )
+
+                details_html = ""
+                if source == "UKMTO" and w.get('details'):
+                    details_html = (
+                        f'<div style="background:#fffbea;border:1px solid #f6e05e;'
+                        f'border-left:4px solid #d69e2e;padding:10px 14px;margin:10px 0;'
+                        f'border-radius:5px;font-size:13px;color:#2d3748;line-height:1.7;">'
+                        f'<strong>📄 通告內容：</strong><br>{w["details"]}'
+                        f'</div>'
+                    )
+
+                kw        = w.get('keywords', [])
+                kw_str    = ', '.join(kw) if isinstance(kw, list) else str(kw)
+                ukmto_tag = (
+                    '<span style="display:inline-block;padding:2px 6px;border-radius:3px;'
+                    'font-size:11px;background:#6c5ce7;color:white;margin-left:6px;'
+                    'vertical-align:middle;">UKMTO</span>'
+                    if source == 'UKMTO' else ''
                 )
 
-            level_chip = ""
-            if source == "UKMTO":
-                colour      = w.get('colour', '')
-                colour_icon = "🔴" if colour == "Red" else "🟡"
-                bg_col      = "#ffebee" if colour == "Red" else "#fff8e1"
-                txt_col     = "#c62828" if colour == "Red" else "#f57f17"
-                bd_col      = "#ef9a9a" if colour == "Red" else "#ffe082"
-                level_chip  = (
-                    f'<span style="font-size:12px;padding:3px 9px;border-radius:4px;'
-                    f'background:{bg_col};color:{txt_col};border:1px solid {bd_col};">'
-                    f'{colour_icon} {colour}</span>'
-                )
-
-            details_html = ""
-            if source == "UKMTO" and w.get('details'):
-                details_html = (
-                    f'<div style="background:#fffbea;border:1px solid #f6e05e;'
-                    f'border-left:4px solid #d69e2e;padding:10px 14px;margin:10px 0;'
-                    f'border-radius:5px;font-size:13px;color:#2d3748;line-height:1.7;">'
-                    f'<strong>📄 通告內容：</strong><br>{w["details"]}'
-                    f'</div>'
-                )
-
-            kw        = w.get('keywords', [])
-            kw_str    = ', '.join(kw) if isinstance(kw, list) else str(kw)
-            ukmto_tag = (
-                '<span style="display:inline-block;padding:2px 6px;border-radius:3px;'
-                'font-size:11px;background:#6c5ce7;color:white;margin-left:6px;'
-                'vertical-align:middle;">UKMTO</span>'
-                if source == 'UKMTO' else ''
-            )
-
-            if is_today:
-                result += f"""
+                if is_today:
+                    result += f"""
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;border-collapse:collapse;border:1px solid #f5c6cb;border-left:5px solid #e74c3c;border-radius:10px;overflow:hidden;box-shadow:0 3px 12px rgba(231,76,60,0.12);">
   <tr>
     <td style="background:linear-gradient(90deg,#e74c3c,#c0392b);padding:11px 16px;">
@@ -587,8 +587,8 @@ def _generate_html_report(self, today_warnings, history_warnings):
     </td>
   </tr>
 </table>"""
-            else:
-                result += f"""
+                else:
+                    result += f"""
 <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;border-collapse:collapse;border:1px solid #e2e8f0;border-left:4px solid #a0aec0;border-radius:8px;overflow:hidden;">
   <tr>
     <td style="background:#f1f3f5;padding:10px 16px;border-bottom:1px solid #e9ecef;">
@@ -628,12 +628,12 @@ def _generate_html_report(self, today_warnings, history_warnings):
     </td>
   </tr>
 </table>"""
-        return result
+            return result
 
-    # ══════════════════════════════════════════
-    # HTML 主體開始
-    # ══════════════════════════════════════════
-    html = f"""<!DOCTYPE html>
+        # ══════════════════════════════════════════
+        # HTML 主體開始
+        # ══════════════════════════════════════════
+        html = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
 <meta charset="utf-8">
@@ -655,9 +655,9 @@ def _generate_html_report(self, today_warnings, history_warnings):
 </tr>
 """
 
-    # ── 今日新增醒目橫幅 ──
-    if today_warnings:
-        html += f"""
+        # ── 今日新增醒目橫幅 ──
+        if today_warnings:
+            html += f"""
 <tr>
   <td style="background:#c0392b;padding:18px 32px;">
     <table width="100%" cellpadding="0" cellspacing="0">
@@ -678,8 +678,8 @@ def _generate_html_report(self, today_warnings, history_warnings):
   </td>
 </tr>
 """
-    else:
-        html += """
+        else:
+            html += """
 <tr>
   <td style="background:#27ae60;padding:14px 32px;text-align:center;">
     <span style="font-size:15px;font-weight:700;color:#ffffff;">✅ 今日無新增航行警告</span>
@@ -687,15 +687,15 @@ def _generate_html_report(self, today_warnings, history_warnings):
 </tr>
 """
 
-    # ── 主要內容區 ──
-    html += """
+        # ── 主要內容區 ──
+        html += """
 <tr>
   <td style="padding:28px 32px;">
 """
 
-    # ── 今日新增區段 ──
-    if today_warnings:
-        html += f"""
+        # ── 今日新增區段 ──
+        if today_warnings:
+            html += f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;background:#fff0f0;border-left:5px solid #e74c3c;border-radius:0 8px 8px 0;">
       <tr>
         <td style="padding:13px 18px;">
@@ -712,19 +712,19 @@ def _generate_html_report(self, today_warnings, history_warnings):
       </tr>
     </table>
 """
-        html += _render_warnings(_sort_warnings(today_warnings), is_today=True)
+            html += _render_warnings(_sort_warnings(today_warnings), is_today=True)
 
-    # ── 分隔線 ──
-    if today_warnings and history_warnings:
-        html += """
+        # ── 分隔線 ──
+        if today_warnings and history_warnings:
+            html += """
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0;">
       <tr><td style="border-top:2px dashed #e9ecef;"></td></tr>
     </table>
 """
 
-    # ── 歷史資料區段 ──
-    if history_warnings:
-        html += f"""
+        # ── 歷史資料區段 ──
+        if history_warnings:
+            html += f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;background:#f0f8f0;border-left:5px solid #27ae60;border-radius:0 8px 8px 0;">
       <tr>
         <td style="padding:13px 18px;">
@@ -741,39 +741,39 @@ def _generate_html_report(self, today_warnings, history_warnings):
       </tr>
     </table>
 """
-        html += _render_warnings(_sort_warnings(history_warnings), is_today=False)
+            html += _render_warnings(_sort_warnings(history_warnings), is_today=False)
 
-    # ── 統計總覽表輔助函式（定義在使用前）──
-    max_total = max(cn_total, tw_total, uk_total, 1)
+        # ── 統計總覽表輔助函式 ──
+        max_total = max(cn_total, tw_total, uk_total, 1)
 
-    def _pct_bar(value, color):
-        pct       = min(100, round(value / max_total * 100))
-        bar_width = max(4, round(pct * 1.2))
-        return (
-            f'<div style="background:#e9ecef;border-radius:4px;height:8px;width:120px;overflow:hidden;margin-top:4px;">'
-            f'<div style="width:{bar_width}px;max-width:120px;background:{color};height:100%;border-radius:4px;"></div>'
-            f'</div>'
-            f'<div style="font-size:11px;color:#718096;margin-top:2px;">{round(value/max(total_count,1)*100)}%</div>'
-        )
+        def _pct_bar(value, color):
+            pct       = min(100, round(value / max_total * 100))
+            bar_width = max(4, round(pct * 1.2))
+            return (
+                f'<div style="background:#e9ecef;border-radius:4px;height:8px;width:120px;overflow:hidden;margin-top:4px;">'
+                f'<div style="width:{bar_width}px;max-width:120px;background:{color};height:100%;border-radius:4px;"></div>'
+                f'</div>'
+                f'<div style="font-size:11px;color:#718096;margin-top:2px;">{round(value/max(total_count,1)*100)}%</div>'
+            )
 
-    def _nb(value, bg, color, border):
-        return (
-            f'<span style="display:inline-block;min-width:32px;padding:3px 8px;'
-            f'border-radius:6px;font-weight:700;font-size:14px;text-align:center;'
-            f'background:{bg};color:{color};border:1.5px solid {border};">{value}</span>'
-        )
+        def _nb(value, bg, color, border):
+            return (
+                f'<span style="display:inline-block;min-width:32px;padding:3px 8px;'
+                f'border-radius:6px;font-weight:700;font-size:14px;text-align:center;'
+                f'background:{bg};color:{color};border:1.5px solid {border};">{value}</span>'
+            )
 
-    def _badge_new(v):
-        return _nb(v, '#fff0f0', '#e74c3c', '#f5c6cb') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
-    def _badge_hist(v):
-        return _nb(v, '#f0fff4', '#27ae60', '#c3e6cb') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
-    def _badge_tot(v):
-        return _nb(v, '#e8f0fe', '#0066cc', '#b8d0f8') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
-    def _badge_coord(v):
-        return _nb(v, '#fff8e1', '#d69e2e', '#fde68a') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
+        def _badge_new(v):
+            return _nb(v, '#fff0f0', '#e74c3c', '#f5c6cb') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
+        def _badge_hist(v):
+            return _nb(v, '#f0fff4', '#27ae60', '#c3e6cb') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
+        def _badge_tot(v):
+            return _nb(v, '#e8f0fe', '#0066cc', '#b8d0f8') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
+        def _badge_coord(v):
+            return _nb(v, '#fff8e1', '#d69e2e', '#fde68a') if v > 0 else _nb(v, '#f8f9fa', '#adb5bd', '#dee2e6')
 
-    # ── 修正③：統計表列順序 UK → CN → TW，UKMTO 的 tr 結構完整 ──
-    html += f"""
+        # ── 統計表（順序 UK → CN → TW）──
+        html += f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0 20px 0;">
       <tr><td style="border-top:2px solid #e9ecef;"></td></tr>
     </table>
@@ -785,6 +785,15 @@ def _generate_html_report(self, today_warnings, history_warnings):
     </table>
 
     <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0;border-radius:10px;overflow:hidden;border:1px solid #dee2e6;">
+      <!-- 表頭 -->
+      <tr style="background:#0a1628;">
+        <td style="padding:12px 16px;color:white;font-weight:700;font-size:12px;letter-spacing:0.8px;width:28%;">資料來源</td>
+        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">🆕 今日</td>
+        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">📚 歷史</td>
+        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">📊 小計</td>
+        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">📍 座標</td>
+        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:16%;">佔比</td>
+      </tr>
       <!-- ① UKMTO -->
       <tr style="background:#f0f4ff;">
         <td style="padding:13px 16px;border-bottom:1px solid #e9ecef;">
@@ -802,7 +811,6 @@ def _generate_html_report(self, today_warnings, history_warnings):
         <td style="padding:13px 10px;text-align:center;border-bottom:1px solid #e9ecef;">{_badge_coord(uk_coords)}</td>
         <td style="padding:13px 10px;text-align:center;border-bottom:1px solid #e9ecef;">{_pct_bar(uk_total, '#0066cc')}</td>
       </tr>
-
       <!-- ② 中國海事局 -->
       <tr style="background:#fffaf0;">
         <td style="padding:13px 16px;border-bottom:1px solid #e9ecef;">
@@ -820,7 +828,6 @@ def _generate_html_report(self, today_warnings, history_warnings):
         <td style="padding:13px 10px;text-align:center;border-bottom:1px solid #e9ecef;">{_badge_coord(cn_coords)}</td>
         <td style="padding:13px 10px;text-align:center;border-bottom:1px solid #e9ecef;">{_pct_bar(cn_total, '#e67e22')}</td>
       </tr>
-
       <!-- ③ 台灣航港局 -->
       <tr style="background:#f0fff4;">
         <td style="padding:13px 16px;border-bottom:1px solid #e9ecef;">
@@ -838,14 +845,6 @@ def _generate_html_report(self, today_warnings, history_warnings):
         <td style="padding:13px 10px;text-align:center;border-bottom:1px solid #e9ecef;">{_badge_coord(tw_coords)}</td>
         <td style="padding:13px 10px;text-align:center;border-bottom:1px solid #e9ecef;">{_pct_bar(tw_total, '#27ae60')}</td>
       </tr>
-        <tr style="background:#0a1628;">
-        <td style="padding:12px 16px;color:white;font-weight:700;font-size:12px;letter-spacing:0.8px;width:28%;">資料來源</td>
-        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">🆕 今日</td>
-        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">📚 歷史</td>
-        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">📊 小計</td>
-        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:14%;">📍 座標</td>
-        <td style="padding:12px 10px;color:white;font-weight:700;font-size:12px;text-align:center;width:16%;">佔比</td>
-      </tr>
       <!-- 合計列 -->
       <tr style="background:#f1f3f5;">
         <td style="padding:13px 16px;">
@@ -857,7 +856,6 @@ def _generate_html_report(self, today_warnings, history_warnings):
         <td style="padding:13px 10px;text-align:center;">{_badge_coord(total_coords)}</td>
         <td style="padding:13px 10px;text-align:center;font-size:13px;font-weight:700;color:#2d3748;">100%</td>
       </tr>
-
     </table>
 
   </td>
@@ -880,7 +878,8 @@ def _generate_html_report(self, today_warnings, history_warnings):
 </body>
 </html>"""
 
-    return html
+        return html
+
 
 
 
