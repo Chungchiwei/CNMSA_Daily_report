@@ -1589,25 +1589,38 @@ class CNMSANavigationWarningsScraper:
 
     # ── Step 3：詳情頁座標抓取 ───────────────────────────
 
-    def _fetch_detail_coords(self, link):
-        """用 requests 抓詳情頁，提取座標"""
-        if not link or link.startswith('javascript'):
-            return []
-        soup = self._get_soup(link, timeout=15)
-        if not soup:
-            return []
-        content = (
-            soup.find('div', class_='text')       or
-            soup.find('div', id='ch_p')            or
-            soup.find('div', class_='TRS_Editor')  or
-            soup.find('div', class_='content')     or
-            soup.find('article')                   or
-            soup
-        )
-        coords = self.coord_extractor.extract_coordinates(content.get_text())
-        if coords:
-            print(f"      📍 詳情頁取得 {len(coords)} 個座標")
-        return coords
+def _fetch_detail_coords(self, link):
+    """用 requests 抓詳情頁，提取座標"""
+    if not link or link.startswith('javascript'):
+        return []
+
+    soup = self._get_soup(link, timeout=15)
+    if not soup:
+        return []
+
+    # 優先用 extract_from_html（傳整個 HTML 字串）
+    # 若 coord_extractor 沒有這個方法，fallback 到 extract_coordinates（傳純文字）
+    try:
+        if hasattr(self.coord_extractor, 'extract_from_html'):
+            coords = self.coord_extractor.extract_from_html(str(soup))
+        else:
+            content = (
+                soup.find('div', class_='text')      or
+                soup.find('div', id='ch_p')           or
+                soup.find('div', class_='TRS_Editor') or
+                soup.find('div', class_='content')    or
+                soup.find('article')                  or
+                soup
+            )
+            coords = self.coord_extractor.extract_coordinates(content.get_text())
+    except Exception as e:
+        print(f"      ⚠️ 座標提取失敗: {type(e).__name__}: {e}")
+        coords = []
+
+    if coords:
+        print(f"      📍 詳情頁取得 {len(coords)} 個座標")
+    return coords
+
 
     # ── Step 4：處理項目（篩選 + 存 DB）─────────────────
 
