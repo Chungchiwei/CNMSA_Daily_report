@@ -3,7 +3,7 @@
 """
 統一海事警告監控系統 (中國海事局 + 台灣航港局 + UKMTO)
 支援經緯度提取、Teams 通知、Email 報告
-版本: 3.1 - UKMTO 座標改從 __NEXT_DATA__ 直接讀取
+版本: 3.2 - CN_MSA 爬蟲重構：強化等待、BS4解析、詳細Debug
 """
 
 import platform
@@ -283,7 +283,6 @@ class UnifiedTeamsNotifier:
                 _, bureau, title, link, pub_time, _, _, coordinates = w
                 fixed_link = self._fix_url(link, base_domain)
 
-                # ── 座標摘要 ──
                 coord_summary = "無座標"
                 if coordinates:
                     try:
@@ -299,7 +298,6 @@ class UnifiedTeamsNotifier:
                     except Exception:
                         coord_summary = "座標格式錯誤"
 
-                # ── 組裝卡片元素 ──
                 item_elements = [
                     {
                         "type": "TextBlock",
@@ -397,7 +395,7 @@ class GmailRelayNotifier:
         self.target_email = target_email
         self.smtp_server  = "smtp.gmail.com"
         self.smtp_port    = 587
-        
+
         if not all([mail_user, mail_pass, target_email]):
             print("⚠️ Email 通知未完整設定")
             self.enabled = False
@@ -413,11 +411,11 @@ class GmailRelayNotifier:
             msg = MIMEMultipart('related')
             total_count = len(today_warnings) + len(history_warnings)
             time_str = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
-            
+
             msg['Subject'] = f"🌊 航行警告監控報告 - 共{total_count}筆 (今日{len(today_warnings)}筆) - {time_str}(TPE)"
             msg['From'] = self.mail_user
             msg['To']   = self.target_email
-            
+
             msg_alt = MIMEMultipart('alternative')
             msg.attach(msg_alt)
             msg_alt.attach(
@@ -446,14 +444,13 @@ class GmailRelayNotifier:
         total_count = len(today_warnings) + len(history_warnings)
         tpe_now = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M')
 
-        # ── 各來源統計 ──
         cn_today   = sum(1 for w in today_warnings if w.get('source') == 'CN_MSA')
         tw_today   = sum(1 for w in today_warnings if w.get('source') == 'TW_MPB')
         uk_today   = sum(1 for w in today_warnings if w.get('source') == 'UKMTO')
         cn_history = sum(1 for w in history_warnings if w.get('source') == 'CN_MSA')
         tw_history = sum(1 for w in history_warnings if w.get('source') == 'TW_MPB')
         uk_history = sum(1 for w in history_warnings if w.get('source') == 'UKMTO')
-        
+
         cn_total = cn_today + cn_history
         tw_total = tw_today + tw_history
         uk_total = uk_today + uk_history
@@ -474,7 +471,6 @@ class GmailRelayNotifier:
         def _sort_warnings(warnings_list):
             return sorted(warnings_list, key=lambda w: SOURCE_ORDER.get(w.get('source', ''), 99))
 
-        # ── 渲染警告卡片 ──
         def _render_warnings(warnings_list, is_today):
             result = ""
             for idx, w in enumerate(warnings_list, 1):
@@ -488,7 +484,6 @@ class GmailRelayNotifier:
                 kw     = w.get('keywords', [])
                 kw_str = ', '.join(kw) if isinstance(kw, list) else str(kw)
 
-                # 座標區塊 (卡片內崁表格)
                 coord_rows = ""
                 if coords:
                     coord_source = w.get('coord_source', 'text')
@@ -498,12 +493,10 @@ class GmailRelayNotifier:
                         'fallback':  '🔄 來源：備用解析',
                     }
                     source_label = source_label_map.get(coord_source, '📍 座標資訊')
-                    
                     coord_rows += f"""
                     <table width="100%" cellpadding="8" cellspacing="0" bgcolor="#F0F7FF">
-                      <tr>
-                        <td>
-                          <font face="Arial, sans-serif" size="2" color="#0056B3"><b>{source_label}</b></font><br>
+                      <tr><td>
+                        <font face="Arial, sans-serif" size="2" color="#0056B3"><b>{source_label}</b></font><br>
                     """
                     for i, pt in enumerate(coords, 1):
                         lat, lon = pt[0], pt[1]
@@ -515,12 +508,8 @@ class GmailRelayNotifier:
                             f'📍 {i}. {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir} '
                             f'&nbsp;&nbsp;<a href="{maps_url}" target="_blank"><font color="#0056B3">🗺️地圖</font></a></font><br>\n'
                         )
-                    coord_rows += """
-                        </td>
-                      </tr>
-                    </table><br>"""
+                    coord_rows += "      </td></tr></table><br>"
 
-                # UKMTO 等級與詳情
                 level_text = ""
                 details_block = ""
                 if source == "UKMTO":
@@ -530,16 +519,13 @@ class GmailRelayNotifier:
                     if w.get('details'):
                         details_block = f"""
                         <table width="100%" cellpadding="10" cellspacing="0" bgcolor="#FFF9E6">
-                          <tr>
-                            <td>
-                              <font face="Arial, sans-serif" size="2" color="#4D4D4D">
-                                <b>📄 通告內容：</b><br>{w['details']}
-                              </font>
-                            </td>
-                          </tr>
+                          <tr><td>
+                            <font face="Arial, sans-serif" size="2" color="#4D4D4D">
+                              <b>📄 通告內容：</b><br>{w['details']}
+                            </font>
+                          </td></tr>
                         </table><br>"""
 
-                # 卡片顏色設定
                 if is_today:
                     card_border = "#D32F2F"
                     header_bg   = "#D32F2F"
@@ -549,60 +535,38 @@ class GmailRelayNotifier:
                     header_bg   = "#607D8B"
                     badge_html  = ""
 
-                # 外層表格製造 1px 邊框效果
                 result += f"""
                 <table width="100%" cellpadding="0" cellspacing="0"><tr><td height="12"></td></tr></table>
                 <table width="100%" cellpadding="1" cellspacing="0" bgcolor="{card_border}">
-                  <tr>
-                    <td>
-                      <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#FFFFFF">
-                        <tr>
-                          <td bgcolor="{header_bg}">
-                            <table width="100%" cellpadding="10" cellspacing="0">
-                              <tr>
-                                <td>
-                                  <font face="Arial, sans-serif" size="3" color="#FFFFFF">
-                                    <b>{idx}. {icon} {title}</b>
-                                  </font>
-                                </td>
-                                <td align="right" width="60">{badge_html}</td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                        <tr>
-                          <td>
-                            <table width="100%" cellpadding="12" cellspacing="0">
-                              <tr>
-                                <td>
-                                  <table width="100%" cellpadding="4" cellspacing="0">
-                                    <tr>
-                                      <td width="33%"><font face="Arial" size="2" color="#4A148C">📋 <b>局處:</b> {bureau}</font></td>
-                                      <td width="33%"><font face="Arial" size="2" color="#0D47A1">📅 <b>時間:</b> {time}</font></td>
-                                      <td width="33%"><font face="Arial" size="2" color="#1B5E20">🔑 <b>標籤:</b> {kw_str}</font>{level_text}</td>
-                                    </tr>
-                                  </table>
-                                  <hr size="1" color="#EEEEEE">
-                                  {details_block}
-                                  {coord_rows}
-                                  
-                                  <table cellpadding="8" cellspacing="0" bgcolor="#E3F2FD">
-                                    <tr>
-                                      <td>
-                                        <a href="{link}" target="_blank">
-                                          <font face="Arial, sans-serif" size="2" color="#1976D2"><b>🔗 前往原始網站查看詳情 →</b></font>
-                                        </a>
-                                      </td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-                            </table>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
+                  <tr><td>
+                    <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#FFFFFF">
+                      <tr>
+                        <td bgcolor="{header_bg}">
+                          <table width="100%" cellpadding="10" cellspacing="0"><tr>
+                            <td><font face="Arial, sans-serif" size="3" color="#FFFFFF"><b>{idx}. {icon} {title}</b></font></td>
+                            <td align="right" width="60">{badge_html}</td>
+                          </tr></table>
+                        </td>
+                      </tr>
+                      <tr><td>
+                        <table width="100%" cellpadding="12" cellspacing="0"><tr><td>
+                          <table width="100%" cellpadding="4" cellspacing="0"><tr>
+                            <td width="33%"><font face="Arial" size="2" color="#4A148C">📋 <b>局處:</b> {bureau}</font></td>
+                            <td width="33%"><font face="Arial" size="2" color="#0D47A1">📅 <b>時間:</b> {time}</font></td>
+                            <td width="33%"><font face="Arial" size="2" color="#1B5E20">🔑 <b>標籤:</b> {kw_str}</font>{level_text}</td>
+                          </tr></table>
+                          <hr size="1" color="#EEEEEE">
+                          {details_block}
+                          {coord_rows}
+                          <table cellpadding="8" cellspacing="0" bgcolor="#E3F2FD"><tr><td>
+                            <a href="{link}" target="_blank">
+                              <font face="Arial, sans-serif" size="2" color="#1976D2"><b>🔗 前往原始網站查看詳情 →</b></font>
+                            </a>
+                          </td></tr></table>
+                        </td></tr></table>
+                      </td></tr>
+                    </table>
+                  </td></tr>
                 </table>"""
             return result
 
@@ -612,9 +576,6 @@ class GmailRelayNotifier:
         def _pct(value):
             return f'{round(value / max(total_count, 1) * 100)}%'
 
-        # ══════════════════════════════════════════
-        # HTML 主體
-        # ══════════════════════════════════════════
         html = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -624,180 +585,124 @@ class GmailRelayNotifier:
 </head>
 <body bgcolor="#F4F6F8" style="margin: 0; padding: 0;">
 <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#F4F6F8">
-  <tr>
-    <td align="center">
-      <table width="680" cellpadding="0" cellspacing="0" bgcolor="#FFFFFF" align="center">
-        <tr>
-          <td bgcolor="#0A1628">
-            <table width="100%" cellpadding="24" cellspacing="0">
-              <tr>
-                <td>
-                  <font face="Arial, sans-serif" size="5" color="#FFFFFF"><b>🌊 WHL_Maritech_FRM 海事警告監控</b></font><br><br>
-                  <font face="Arial, sans-serif" size="2" color="#8FA3B8">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.1</font>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-"""
+  <tr><td align="center">
+    <table width="680" cellpadding="0" cellspacing="0" bgcolor="#FFFFFF" align="center">
+      <tr>
+        <td bgcolor="#0A1628">
+          <table width="100%" cellpadding="24" cellspacing="0"><tr><td>
+            <font face="Arial, sans-serif" size="5" color="#FFFFFF"><b>🌊 WHL_Maritech_FRM 海事警告監控</b></font><br><br>
+            <font face="Arial, sans-serif" size="2" color="#8FA3B8">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.2</font>
+          </td></tr></table>
+        </td>
+      </tr>"""
 
-        # ── 今日新增橫幅 ──
         if today_warnings:
             html += f"""
-        <tr>
-          <td bgcolor="#D32F2F">
-            <table width="100%" cellpadding="16" cellspacing="0">
-              <tr>
-                <td>
-                  <font face="Arial, sans-serif" size="4" color="#FFFFFF"><b>🚨 今日發現 {len(today_warnings)} 筆新增航行警告</b></font><br><br>
-                  <font face="Arial, sans-serif" size="2" color="#FFCDD2">{sources_text}</font>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-"""
+      <tr>
+        <td bgcolor="#D32F2F">
+          <table width="100%" cellpadding="16" cellspacing="0"><tr><td>
+            <font face="Arial, sans-serif" size="4" color="#FFFFFF"><b>🚨 今日發現 {len(today_warnings)} 筆新增航行警告</b></font><br><br>
+            <font face="Arial, sans-serif" size="2" color="#FFCDD2">{sources_text}</font>
+          </td></tr></table>
+        </td>
+      </tr>"""
         else:
             html += """
-        <tr>
-          <td bgcolor="#2E7D32">
-            <table width="100%" cellpadding="16" cellspacing="0">
-              <tr>
-                <td align="center">
-                  <font face="Arial, sans-serif" size="3" color="#FFFFFF"><b>✅ 今日無新增航行警告</b></font>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-"""
+      <tr>
+        <td bgcolor="#2E7D32">
+          <table width="100%" cellpadding="16" cellspacing="0"><tr><td align="center">
+            <font face="Arial, sans-serif" size="3" color="#FFFFFF"><b>✅ 今日無新增航行警告</b></font>
+          </td></tr></table>
+        </td>
+      </tr>"""
 
-        # ── 主要內容區 ──
         html += """
-        <tr>
-          <td>
-            <table width="100%" cellpadding="20" cellspacing="0">
-              <tr>
-                <td>
-"""
+      <tr><td>
+        <table width="100%" cellpadding="20" cellspacing="0"><tr><td>"""
 
         if today_warnings:
             html += f"""
-                  <table width="100%" cellpadding="10" cellspacing="0" bgcolor="#FFEBEE">
-                    <tr>
-                      <td>
-                        <font face="Arial, sans-serif" size="4" color="#B71C1C"><b>🚨 今日新增 ({len(today_warnings)} 筆)</b></font>
-                      </td>
-                    </tr>
-                  </table>
-                  {_render_warnings(_sort_warnings(today_warnings), is_today=True)}
-                  <br><br><hr size="1" color="#E0E0E0"><br>
-"""
+          <table width="100%" cellpadding="10" cellspacing="0" bgcolor="#FFEBEE"><tr><td>
+            <font face="Arial, sans-serif" size="4" color="#B71C1C"><b>🚨 今日新增 ({len(today_warnings)} 筆)</b></font>
+          </td></tr></table>
+          {_render_warnings(_sort_warnings(today_warnings), is_today=True)}
+          <br><br><hr size="1" color="#E0E0E0"><br>"""
 
         if history_warnings:
             html += f"""
-                  <table width="100%" cellpadding="10" cellspacing="0" bgcolor="#E8F5E9">
-                    <tr>
-                      <td>
-                        <font face="Arial, sans-serif" size="4" color="#1B5E20"><b>📚 過往歷史資料 ({len(history_warnings)} 筆)</b></font>
-                      </td>
-                    </tr>
-                  </table>
-                  {_render_warnings(_sort_warnings(history_warnings), is_today=False)}
-"""
+          <table width="100%" cellpadding="10" cellspacing="0" bgcolor="#E8F5E9"><tr><td>
+            <font face="Arial, sans-serif" size="4" color="#1B5E20"><b>📚 過往歷史資料 ({len(history_warnings)} 筆)</b></font>
+          </td></tr></table>
+          {_render_warnings(_sort_warnings(history_warnings), is_today=False)}"""
 
-        # ── 統計總覽表 (使用 cellspacing="1" 製作邊框) ──
         html += f"""
-                  <br><hr size="1" color="#E0E0E0"><br>
-                  <font face="Arial, sans-serif" size="4" color="#333333"><b>📊 警告來源統計</b></font><br><br>
-                  
-                  <table width="100%" cellpadding="10" cellspacing="1" bgcolor="#CFD8DC">
-                    <tr bgcolor="#263238">
-                      <td width="28%"><font face="Arial" size="2" color="#FFFFFF"><b>來源</b></font></td>
-                      <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>🆕 今日</b></font></td>
-                      <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>📚 歷史</b></font></td>
-                      <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>📊 小計</b></font></td>
-                      <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>📍 座標數</b></font></td>
-                      <td width="16%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>佔比</b></font></td>
-                    </tr>
-                    <tr bgcolor="#FFFFFF">
-                      <td><font face="Arial" size="3">🇬🇧</font> <font face="Arial" size="2" color="#333333"><b>UKMTO</b></font></td>
-                      <td align="center">{_badge(uk_today, '#D32F2F' if uk_today else '#9E9E9E')}</td>
-                      <td align="center">{_badge(uk_history, '#2E7D32' if uk_history else '#9E9E9E')}</td>
-                      <td align="center">{_badge(uk_total, '#1565C0' if uk_total else '#9E9E9E')}</td>
-                      <td align="center">{_badge(uk_coords, '#F57F17' if uk_coords else '#9E9E9E')}</td>
-                      <td align="center"><font face="Arial" size="2" color="#333333">{_pct(uk_total)}</font></td>
-                    </tr>
-                    <tr bgcolor="#FAFAFA">
-                      <td><font face="Arial" size="3">🇨🇳</font> <font face="Arial" size="2" color="#333333"><b>中國海事局</b></font></td>
-                      <td align="center">{_badge(cn_today, '#D32F2F' if cn_today else '#9E9E9E')}</td>
-                      <td align="center">{_badge(cn_history, '#2E7D32' if cn_history else '#9E9E9E')}</td>
-                      <td align="center">{_badge(cn_total, '#1565C0' if cn_total else '#9E9E9E')}</td>
-                      <td align="center">{_badge(cn_coords, '#F57F17' if cn_coords else '#9E9E9E')}</td>
-                      <td align="center"><font face="Arial" size="2" color="#333333">{_pct(cn_total)}</font></td>
-                    </tr>
-                    <tr bgcolor="#FFFFFF">
-                      <td><font face="Arial" size="3">🇹🇼</font> <font face="Arial" size="2" color="#333333"><b>台灣航港局</b></font></td>
-                      <td align="center">{_badge(tw_today, '#D32F2F' if tw_today else '#9E9E9E')}</td>
-                      <td align="center">{_badge(tw_history, '#2E7D32' if tw_history else '#9E9E9E')}</td>
-                      <td align="center">{_badge(tw_total, '#1565C0' if tw_total else '#9E9E9E')}</td>
-                      <td align="center">{_badge(tw_coords, '#F57F17' if tw_coords else '#9E9E9E')}</td>
-                      <td align="center"><font face="Arial" size="2" color="#333333">{_pct(tw_total)}</font></td>
-                    </tr>
-                    <tr bgcolor="#ECEFF1">
-                      <td><font face="Arial" size="2" color="#333333"><b>📈 合計</b></font></td>
-                      <td align="center">{_badge(len(today_warnings), '#D32F2F' if today_warnings else '#9E9E9E')}</td>
-                      <td align="center">{_badge(len(history_warnings), '#2E7D32' if history_warnings else '#9E9E9E')}</td>
-                      <td align="center">{_badge(total_count, '#1565C0' if total_count else '#9E9E9E')}</td>
-                      <td align="center">{_badge(total_coords, '#F57F17' if total_coords else '#9E9E9E')}</td>
-                      <td align="center"><font face="Arial" size="2" color="#333333"><b>100%</b></font></td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-
-        <tr>
-          <td bgcolor="#E9ECEF">
-            <table width="100%" cellpadding="16" cellspacing="0">
-              <tr>
-                <td align="center">
-                  <font face="Arial, sans-serif" size="2" color="#6C757D">
-                    ⚠️ 此為自動發送的郵件，請勿直接回覆<br><br>
-                    航行警告監控系統 v3.1 &nbsp;|&nbsp; Navigation Warning Monitor System
-                  </font>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </td>
-  </tr>
+          <br><hr size="1" color="#E0E0E0"><br>
+          <font face="Arial, sans-serif" size="4" color="#333333"><b>📊 警告來源統計</b></font><br><br>
+          <table width="100%" cellpadding="10" cellspacing="1" bgcolor="#CFD8DC">
+            <tr bgcolor="#263238">
+              <td width="28%"><font face="Arial" size="2" color="#FFFFFF"><b>來源</b></font></td>
+              <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>🆕 今日</b></font></td>
+              <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>📚 歷史</b></font></td>
+              <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>📊 小計</b></font></td>
+              <td width="14%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>📍 座標數</b></font></td>
+              <td width="16%" align="center"><font face="Arial" size="2" color="#FFFFFF"><b>佔比</b></font></td>
+            </tr>
+            <tr bgcolor="#FFFFFF">
+              <td><font face="Arial" size="3">🇬🇧</font> <font face="Arial" size="2" color="#333333"><b>UKMTO</b></font></td>
+              <td align="center">{_badge(uk_today, '#D32F2F' if uk_today else '#9E9E9E')}</td>
+              <td align="center">{_badge(uk_history, '#2E7D32' if uk_history else '#9E9E9E')}</td>
+              <td align="center">{_badge(uk_total, '#1565C0' if uk_total else '#9E9E9E')}</td>
+              <td align="center">{_badge(uk_coords, '#F57F17' if uk_coords else '#9E9E9E')}</td>
+              <td align="center"><font face="Arial" size="2" color="#333333">{_pct(uk_total)}</font></td>
+            </tr>
+            <tr bgcolor="#FAFAFA">
+              <td><font face="Arial" size="3">🇨🇳</font> <font face="Arial" size="2" color="#333333"><b>中國海事局</b></font></td>
+              <td align="center">{_badge(cn_today, '#D32F2F' if cn_today else '#9E9E9E')}</td>
+              <td align="center">{_badge(cn_history, '#2E7D32' if cn_history else '#9E9E9E')}</td>
+              <td align="center">{_badge(cn_total, '#1565C0' if cn_total else '#9E9E9E')}</td>
+              <td align="center">{_badge(cn_coords, '#F57F17' if cn_coords else '#9E9E9E')}</td>
+              <td align="center"><font face="Arial" size="2" color="#333333">{_pct(cn_total)}</font></td>
+            </tr>
+            <tr bgcolor="#FFFFFF">
+              <td><font face="Arial" size="3">🇹🇼</font> <font face="Arial" size="2" color="#333333"><b>台灣航港局</b></font></td>
+              <td align="center">{_badge(tw_today, '#D32F2F' if tw_today else '#9E9E9E')}</td>
+              <td align="center">{_badge(tw_history, '#2E7D32' if tw_history else '#9E9E9E')}</td>
+              <td align="center">{_badge(tw_total, '#1565C0' if tw_total else '#9E9E9E')}</td>
+              <td align="center">{_badge(tw_coords, '#F57F17' if tw_coords else '#9E9E9E')}</td>
+              <td align="center"><font face="Arial" size="2" color="#333333">{_pct(tw_total)}</font></td>
+            </tr>
+            <tr bgcolor="#ECEFF1">
+              <td><font face="Arial" size="2" color="#333333"><b>📈 合計</b></font></td>
+              <td align="center">{_badge(len(today_warnings), '#D32F2F' if today_warnings else '#9E9E9E')}</td>
+              <td align="center">{_badge(len(history_warnings), '#2E7D32' if history_warnings else '#9E9E9E')}</td>
+              <td align="center">{_badge(total_count, '#1565C0' if total_count else '#9E9E9E')}</td>
+              <td align="center">{_badge(total_coords, '#F57F17' if total_coords else '#9E9E9E')}</td>
+              <td align="center"><font face="Arial" size="2" color="#333333"><b>100%</b></font></td>
+            </tr>
+          </table>
+        </td></tr></table>
+      </td></tr>
+      <tr>
+        <td bgcolor="#E9ECEF">
+          <table width="100%" cellpadding="16" cellspacing="0"><tr><td align="center">
+            <font face="Arial, sans-serif" size="2" color="#6C757D">
+              ⚠️ 此為自動發送的郵件，請勿直接回覆<br><br>
+              航行警告監控系統 v3.2 &nbsp;|&nbsp; Navigation Warning Monitor System
+            </font>
+          </td></tr></table>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 </table>
 </body>
 </html>"""
-
         return html
 
 
-
-
-
-# ==================== 5. UKMTO 爬蟲 (v3.1 - 座標從 __NEXT_DATA__ 讀取) ====================
+# ==================== 5. UKMTO 爬蟲 (v3.2 - 不變) ====================
 class UKMTOScraper:
-    """
-    爬取 UKMTO 航行警告
-    座標優先順序：
-      1. __NEXT_DATA__ JSON（精確，來自地圖 Pin 原始資料）
-      2. _next/data/ API（備用，不需要 JS）
-      3. 文字解析 fallback（最後手段）
-    """
-
     URL = "https://www.ukmto.org/recent-incidents"
-
     MONTH_MAP = {
         "January": 1, "February": 2, "March": 3,    "April": 4,
         "May": 5,     "June": 6,     "July": 7,      "August": 8,
@@ -820,13 +725,11 @@ class UKMTOScraper:
         self.new_warnings_history      = []
         self.captured_warnings_today   = []
         self.captured_warnings_history = []
-
-        self._next_data_coords: dict = {}
+        self._next_data_coords: dict   = {}
 
         print(f"  🇬🇧 UKMTO 爬蟲設定:")
         print(f"     - 抓取範圍: 最近 {days} 天 (從 {self.cutoff_date.strftime('%Y-%m-%d')} 起)")
         print(f"     - 今日定義: {self.today_start.strftime('%Y-%m-%d')} 00:00 UTC 起")
-        print(f"     - 座標策略: __NEXT_DATA__ → _next/data API → 文字解析")
 
         print("  🌐 正在啟動 Chrome WebDriver (UKMTO)...")
         self.driver = self._init_driver()
@@ -887,19 +790,16 @@ class UKMTOScraper:
             raw       = script_el.get_attribute("innerHTML")
             data      = json.loads(raw)
             print("  ✅ 成功讀取 __NEXT_DATA__")
-
             page_props = data.get("props", {}).get("pageProps", {})
-
             candidates = [
-                (page_props.get("incidents", []),                         "id",  "latitude",  "longitude"),
-                (page_props.get("incidents", []),                         "id",  "lat",       "lng"),
-                (page_props.get("incidents", []),                         "_id", "latitude",  "longitude"),
-                (page_props.get("data", {}).get("incidents", []),         "id",  "latitude",  "longitude"),
-                (page_props.get("data", {}).get("incidents", []),         "id",  "lat",       "lng"),
-                (page_props.get("initialData", []),                       "id",  "latitude",  "longitude"),
-                (page_props.get("initialData", []),                       "id",  "lat",       "lng"),
+                (page_props.get("incidents", []),                 "id",  "latitude",  "longitude"),
+                (page_props.get("incidents", []),                 "id",  "lat",       "lng"),
+                (page_props.get("incidents", []),                 "_id", "latitude",  "longitude"),
+                (page_props.get("data", {}).get("incidents", []), "id",  "latitude",  "longitude"),
+                (page_props.get("data", {}).get("incidents", []), "id",  "lat",       "lng"),
+                (page_props.get("initialData", []),               "id",  "latitude",  "longitude"),
+                (page_props.get("initialData", []),               "id",  "lat",       "lng"),
             ]
-
             for incidents, id_key, lat_key, lon_key in candidates:
                 if not incidents:
                     continue
@@ -908,7 +808,6 @@ class UKMTOScraper:
                         inc_id = str(inc.get(id_key, ""))
                         lat    = inc.get(lat_key)
                         lon    = inc.get(lon_key)
-
                         if lat is None or lon is None:
                             pos = inc.get("position") or inc.get("location") or inc.get("coordinates") or {}
                             if isinstance(pos, dict):
@@ -916,7 +815,6 @@ class UKMTOScraper:
                                 lon = pos.get("lng") or pos.get("lon") or pos.get("longitude")
                             elif isinstance(pos, (list, tuple)) and len(pos) >= 2:
                                 lat, lon = pos[0], pos[1]
-
                         if lat is not None and lon is not None:
                             lat_f = float(lat)
                             lon_f = float(lon)
@@ -924,32 +822,23 @@ class UKMTOScraper:
                                 coord_map[inc_id] = (lat_f, lon_f)
                     except (ValueError, TypeError):
                         continue
-
                 if coord_map:
                     print(f"  📡 __NEXT_DATA__ 共解析到 {len(coord_map)} 筆座標")
                     return coord_map
-
             if not coord_map:
-                print("  ⚠️  標準路徑未找到座標，嘗試遞迴搜尋 __NEXT_DATA__...")
+                print("  ⚠️  標準路徑未找到座標，嘗試遞迴搜尋...")
                 coord_map = self._deep_search_coords(data)
                 if coord_map:
                     print(f"  📡 遞迴搜尋共找到 {len(coord_map)} 筆座標")
-
         except Exception as e:
             print(f"  ⚠️  __NEXT_DATA__ 解析失敗: {e}")
-
         return coord_map
 
     def _deep_search_coords(self, obj, depth=0, result=None) -> dict:
-        """
-        遞迴搜尋 JSON 物件中所有含 lat/lon 的節點。
-        最多遞迴 6 層，避免效能問題。
-        """
         if result is None:
             result = {}
         if depth > 6:
             return result
-
         if isinstance(obj, dict):
             lat = obj.get("latitude") or obj.get("lat")
             lon = obj.get("longitude") or obj.get("lng") or obj.get("lon")
@@ -963,18 +852,12 @@ class UKMTOScraper:
                     pass
             for v in obj.values():
                 self._deep_search_coords(v, depth + 1, result)
-
         elif isinstance(obj, list):
             for item in obj:
                 self._deep_search_coords(item, depth + 1, result)
-
         return result
 
     def _fetch_coords_from_next_api(self) -> dict:
-        """
-        嘗試透過 Next.js 的 _next/data/{buildId}/recent-incidents.json 端點取得座標。
-        buildId 從已載入頁面的 __NEXT_DATA__ 中讀取。
-        """
         coord_map = {}
         try:
             script_el = self.driver.find_element(By.ID, "__NEXT_DATA__")
@@ -982,22 +865,15 @@ class UKMTOScraper:
             build_id  = raw.get("buildId", "")
             if not build_id:
                 return coord_map
-
             api_url = f"https://www.ukmto.org/_next/data/{build_id}/recent-incidents.json"
             print(f"  🔄 嘗試 _next/data API: {api_url}")
-            resp = requests.get(
-                api_url,
-                timeout=15,
-                verify=False,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
+            resp = requests.get(api_url, timeout=15, verify=False, headers={"User-Agent": "Mozilla/5.0"})
             if resp.status_code == 200:
                 api_data   = resp.json()
                 page_props = api_data.get("pageProps", {})
                 incidents  = (
                     page_props.get("incidents") or
-                    page_props.get("data", {}).get("incidents") or
-                    []
+                    page_props.get("data", {}).get("incidents") or []
                 )
                 for inc in incidents:
                     try:
@@ -1030,25 +906,19 @@ class UKMTOScraper:
 
     def scrape(self):
         print(f"\n🇬🇧 開始爬取 UKMTO 航行警告...")
-        print(f"  🌐 目標網址: {self.URL}")
-
         try:
             self.driver.get(self.URL)
-            self.wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "ul.IncidentList_incidentList__NGsl0")
-                )
-            )
+            self.wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "ul.IncidentList_incidentList__NGsl0")
+            ))
             print("  ✅ 頁面載入完成")
             time.sleep(2)
 
-            # ── Step 1: 從 __NEXT_DATA__ 批次取得所有座標 ──
             print("\n  📡 Step 1: 從 __NEXT_DATA__ 提取座標...")
             self._next_data_coords = self._extract_coords_from_next_data()
 
-            # ── Step 2: 若 __NEXT_DATA__ 沒有結果，嘗試 API ──
             if not self._next_data_coords:
-                print("  🔄 Step 2: __NEXT_DATA__ 無結果，嘗試 _next/data API...")
+                print("  🔄 Step 2: 嘗試 _next/data API...")
                 self._next_data_coords = self._fetch_coords_from_next_api()
 
             if self._next_data_coords:
@@ -1056,7 +926,6 @@ class UKMTOScraper:
             else:
                 print("  ⚠️  無法預載座標，將改用文字解析 fallback")
 
-            # ── Step 3: 逐筆處理事件列表 ──
             print("\n  📋 Step 3: 開始解析事件列表...")
             li_elements = self.driver.find_elements(
                 By.CSS_SELECTOR,
@@ -1085,49 +954,30 @@ class UKMTOScraper:
                 pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
-        print(f"\n🇬🇧 UKMTO 爬取完成:")
-        print(f"   🆕 今日新增: {len(self.new_warnings_today)} 筆")
-        print(f"   📚 歷史資料: {len(self.new_warnings_history)} 筆")
-        print(f"   📊 總計: {total_new} 筆")
-
+        print(f"\n🇬🇧 UKMTO 爬取完成: 🆕 今日={len(self.new_warnings_today)} | 📚 歷史={len(self.new_warnings_history)} | 總計={total_new}")
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
     def _process_incident(self, elem):
-        # ── 基本欄位 ──
         incident_id = elem.get_attribute("id") or ""
-
         try:
-            title = elem.find_element(
-                By.CSS_SELECTOR, "h3.IncidentList_title__cOmOY button"
-            ).text.strip()
+            title = elem.find_element(By.CSS_SELECTOR, "h3.IncidentList_title__cOmOY button").text.strip()
         except Exception:
             title = "N/A"
-
         try:
-            colour = (
-                elem.find_element(By.CSS_SELECTOR, "span.Pin_pin__dpf_F")
-                    .get_attribute("data-colour") or "N/A"
-            )
+            colour = elem.find_element(By.CSS_SELECTOR, "span.Pin_pin__dpf_F").get_attribute("data-colour") or "N/A"
         except Exception:
             colour = "N/A"
-
         try:
-            date_str      = elem.find_element(
-                By.CSS_SELECTOR, "ul.IncidentList_meta__JmhSj li span"
-            ).text.strip()
+            date_str      = elem.find_element(By.CSS_SELECTOR, "ul.IncidentList_meta__JmhSj li span").text.strip()
             incident_date = self._parse_date(date_str)
         except Exception:
             date_str      = "N/A"
             incident_date = None
-
         try:
-            details = elem.find_element(
-                By.CSS_SELECTOR, "p.IncidentList_details__bwUAz"
-            ).text.strip()
+            details = elem.find_element(By.CSS_SELECTOR, "p.IncidentList_details__bwUAz").text.strip()
         except Exception:
             details = "N/A"
 
-        # ── 日期篩選 ──
         if incident_date is None:
             print(f"  ⚠️  跳過（日期無法解析）：{title}")
             return
@@ -1139,48 +989,29 @@ class UKMTOScraper:
         colour_icon = "🔴" if colour == "Red" else "🟡"
         print(f"  {time_label} {colour_icon} [{date_str}] {title}")
 
-        # ── 座標取得（三層優先順序）──
         coordinates  = []
         coord_source = "none"
 
-        # 優先 1：從預載的 __NEXT_DATA__ / API 座標 dict 查詢
         if incident_id and incident_id in self._next_data_coords:
             coordinates  = [self._next_data_coords[incident_id]]
             coord_source = "next_data"
-            lat, lon     = coordinates[0]
-            lat_dir      = 'N' if lat >= 0 else 'S'
-            lon_dir      = 'E' if lon >= 0 else 'W'
-            print(f"    📡 __NEXT_DATA__ 座標: {abs(lat):.4f}°{lat_dir}, {abs(lon):.4f}°{lon_dir}")
-
-        # 優先 2：id 模糊比對
         if not coordinates and self._next_data_coords:
             clean_id = incident_id.lstrip('#').strip()
             for key, coord in self._next_data_coords.items():
                 if clean_id and (clean_id in key or key in clean_id):
                     coordinates  = [coord]
                     coord_source = "next_data"
-                    print(f"    📡 __NEXT_DATA__ 模糊比對座標 (id={key})")
                     break
-
-        # 優先 3：文字解析 fallback
         if not coordinates:
             text_coords = self.coord_extractor.extract_coordinates(details)
             if text_coords:
                 coordinates  = text_coords
                 coord_source = "text"
-                print(f"    📝 文字解析座標: {len(coordinates)} 個")
-            else:
-                print(f"    ℹ️  無座標資訊")
 
-        # ── 關鍵字比對 ──
-        matched_keywords = [
-            k for k in self.keywords
-            if k.lower() in (title + " " + details).lower()
-        ]
+        matched_keywords = [k for k in self.keywords if k.lower() in (title + " " + details).lower()]
         if not matched_keywords:
             matched_keywords = ["UKMTO"]
 
-        # ── 存入資料庫 ──
         db_data = (
             "UKMTO", title, self.URL, date_str,
             ', '.join(matched_keywords),
@@ -1191,17 +1022,10 @@ class UKMTOScraper:
 
         if is_new and w_id:
             warning_data = {
-                'id':           w_id,
-                'bureau':       "UKMTO",
-                'title':        title,
-                'link':         self.URL,
-                'time':         date_str,
-                'keywords':     matched_keywords,
-                'source':       'UKMTO',
-                'colour':       colour,
-                'coordinates':  coordinates,
-                'coord_source': coord_source,
-                'details':      details,
+                'id': w_id, 'bureau': "UKMTO", 'title': title,
+                'link': self.URL, 'time': date_str, 'keywords': matched_keywords,
+                'source': 'UKMTO', 'colour': colour,
+                'coordinates': coordinates, 'coord_source': coord_source, 'details': details,
             }
             if is_today:
                 self.new_warnings_today.append(w_id)
@@ -1215,7 +1039,7 @@ class UKMTOScraper:
             print(f"    ℹ️  資料已存在")
 
 
-# ==================== 6. 台灣航港局爬蟲 ====================
+# ==================== 6. 台灣航港局爬蟲 (不變) ====================
 class TWMaritimePortBureauScraper:
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor, days=3):
         self.db_manager      = db_manager
@@ -1251,9 +1075,7 @@ class TWMaritimePortBureauScraper:
             'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
-        options.add_experimental_option(
-            'prefs', {'profile.default_content_setting_values.notifications': 2}
-        )
+        options.add_experimental_option('prefs', {'profile.default_content_setting_values.notifications': 2})
         options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
         options.add_experimental_option('useAutomationExtension', False)
 
@@ -1333,9 +1155,7 @@ class TWMaritimePortBureauScraper:
                     return {'has_data': False, 'notices': [], 'processed': 0}
             else:
                 try:
-                    nb = self.wait.until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, "li.next a"))
-                    )
+                    nb = self.wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "li.next a")))
                     self.driver.execute_script("arguments[0].scrollIntoView(true);", nb)
                     time.sleep(0.5)
                     self.driver.execute_script("arguments[0].click();", nb)
@@ -1419,9 +1239,7 @@ class TWMaritimePortBureauScraper:
                                 detail_soup.find('div', id='container')
                             )
                             if content_div:
-                                for pc in self.coord_extractor.extract_coordinates(
-                                    content_div.get_text()
-                                ):
+                                for pc in self.coord_extractor.extract_coordinates(content_div.get_text()):
                                     if pc not in coordinates:
                                         coordinates.append(pc)
                             self.driver.close()
@@ -1448,16 +1266,10 @@ class TWMaritimePortBureauScraper:
 
                     if is_new and w_id:
                         warning_data = {
-                            'id':          w_id,
-                            'bureau':      unit,
-                            'title':       title,
-                            'link':        link,
-                            'time':        date,
-                            'keywords':    matched_keywords,
-                            'source':      'TW_MPB',
-                            'category':    category_name,
-                            'coordinates': coordinates,
-                            'coord_source': 'text'
+                            'id': w_id, 'bureau': unit, 'title': title,
+                            'link': link, 'time': date, 'keywords': matched_keywords,
+                            'source': 'TW_MPB', 'category': category_name,
+                            'coordinates': coordinates, 'coord_source': 'text'
                         }
                         if is_today:
                             self.new_warnings_today.append(w_id)
@@ -1507,15 +1319,29 @@ class TWMaritimePortBureauScraper:
                 pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
-        print(f"\n🇹🇼 台灣航港局爬取完成:")
-        print(f"   🆕 今日新增: {len(self.new_warnings_today)} 筆")
-        print(f"   📚 歷史資料: {len(self.new_warnings_history)} 筆")
-        print(f"   📊 總計: {total_new} 筆")
+        print(f"\n🇹🇼 台灣航港局爬取完成: 🆕 今日={len(self.new_warnings_today)} | 📚 歷史={len(self.new_warnings_history)} | 總計={total_new}")
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
 
-# ==================== 7. 中國海事局爬蟲 ====================
+# ==================== 7. 中國海事局爬蟲 (v3.2 - 完整重構) ====================
 class CNMSANavigationWarningsScraper:
+    """
+    改動重點 (v3.2)：
+    1. scrape_all_bureaus()  — 加入頁面結構 debug，確認選單是否正常展開
+    2. scrape_bureau_warnings() — 三層等待策略 + BS4 解析取代 find_elements
+    3. _parse_item_from_bs4() — 獨立的項目解析方法，支援多種 DOM 結構
+    4. _fetch_detail_coords() — 獨立的詳情頁座標抓取，含 timeout 保護
+    5. 所有關鍵步驟加入詳細 debug 輸出，方便快速定位問題
+    """
+
+    # 中國海事局已知的各地方局名稱（備用，若選單抓取失敗時使用）
+    FALLBACK_BUREAUS = [
+        "天津海事局", "河北海事局", "辽宁海事局", "山东海事局",
+        "上海海事局", "江苏海事局", "浙江海事局", "福建海事局",
+        "广东海事局", "广西海事局", "海南海事局", "长江海事局",
+        "黑龙江海事局", "连云港海事局", "深圳海事局",
+    ]
+
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor,
                  headless=True, days=3):
         self.db_manager      = db_manager
@@ -1524,7 +1350,7 @@ class CNMSANavigationWarningsScraper:
         self.teams_notifier  = teams_notifier
         self.coord_extractor = coord_extractor
 
-        print("🇨🇳 初始化中國海事局爬蟲...")
+        print("🇨🇳 初始化中國海事局爬蟲 v3.2...")
 
         options = webdriver.ChromeOptions()
         if headless:
@@ -1533,14 +1359,17 @@ class CNMSANavigationWarningsScraper:
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_argument(
             'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36'
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         )
+        # 停用圖片加速載入，但保留 JS（JS 是動態載入必需的）
         options.add_experimental_option(
             'prefs', {'profile.managed_default_content_settings.images': 2}
         )
-        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
 
         try:
             service = Service(ChromeDriverManager().install())
@@ -1548,7 +1377,7 @@ class CNMSANavigationWarningsScraper:
                 service.creation_flags = subprocess.CREATE_NO_WINDOW
             self.driver = webdriver.Chrome(service=service, options=options)
             self.driver.set_page_load_timeout(120)
-            self.wait = WebDriverWait(self.driver, 15)
+            self.wait = WebDriverWait(self.driver, 20)
             print("  ✅ WebDriver 啟動成功")
         except Exception as e:
             print(f"  ❌ WebDriver 啟動失敗: {e}")
@@ -1563,201 +1392,373 @@ class CNMSANavigationWarningsScraper:
         self.captured_warnings_today   = []
         self.captured_warnings_history = []
 
-        print(f"  📅 中國海事局爬蟲設定: 最近 {days} 天 | 今日: {self.today_start.strftime('%Y-%m-%d')}")
+        print(f"  📅 抓取範圍: 最近 {days} 天 | 截止: {self.cutoff_date.strftime('%Y-%m-%d')} | 今日: {self.today_start.strftime('%Y-%m-%d')}")
+
+    # ── 工具方法 ──────────────────────────────────────────
 
     def check_keywords(self, text):
+        """關鍵字比對，回傳所有命中的關鍵字清單"""
+        if not text:
+            return []
         return [k for k in self.keywords if k.lower() in text.lower()]
 
     def parse_date(self, date_str):
+        """解析多種日期格式，回傳 datetime 或 None"""
+        if not date_str:
+            return None
+        date_str = date_str.strip()
         for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y年%m月%d日']:
             try:
-                return datetime.strptime(date_str.strip(), fmt)
+                return datetime.strptime(date_str, fmt)
             except Exception:
                 continue
+        # 嘗試從字串中提取日期片段
+        m = re.search(r'(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})', date_str)
+        if m:
+            try:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except Exception:
+                pass
         return None
 
+    def _wait_for_list_content(self, timeout=15):
+        """
+        三層等待策略：
+          1. 等待 .right_main 容器出現
+          2. 等待容器內有 <a> 連結（真正載入完成）
+          3. 額外 1 秒緩衝
+        回傳 True/False 表示是否成功
+        """
+        try:
+            # 層 1：容器出現
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "right_main"))
+            )
+            # 層 2：容器內有連結
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".right_main a"))
+            )
+            time.sleep(1)  # 層 3：緩衝
+            return True
+        except Exception as e:
+            print(f"    ⚠️ 等待列表內容逾時: {e}")
+            return False
+
+    def _parse_items_from_bs4(self):
+        """
+        用 BeautifulSoup 解析當前頁面的 .right_main，
+        回傳 list of dict: [{title, link, publish_time}, ...]
+        支援兩種常見 DOM 結構：
+          A. <a title="..." href="..."><span class="time">日期</span></a>
+          B. <li><a href="...">標題</a><span>日期</span></li>
+        """
+        items = []
+        try:
+            soup       = BeautifulSoup(self.driver.page_source, 'html.parser')
+            right_main = soup.find(class_='right_main')
+
+            if not right_main:
+                print("    ❌ BS4 找不到 .right_main")
+                # Debug：印出頁面前 500 字元幫助診斷
+                body_text = soup.get_text()[:500].replace('\n', ' ')
+                print(f"    🔎 頁面內容預覽: {body_text}")
+                return items
+
+            all_links = right_main.find_all('a')
+            print(f"    🔎 BS4 在 .right_main 找到 {len(all_links)} 個 <a> 連結")
+
+            if not all_links:
+                # 進一步 debug：印出 right_main 的原始 HTML 前 300 字
+                print(f"    🔎 right_main HTML 預覽: {str(right_main)[:300]}")
+                return items
+
+            for a_tag in all_links:
+                try:
+                    # ── 標題 ──
+                    title = (
+                        a_tag.get('title') or
+                        a_tag.get_text(strip=True) or
+                        ''
+                    )
+                    # 移除標題末尾的日期（常見格式：「標題 2026-04-07」）
+                    title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title).strip()
+
+                    if not title:
+                        continue
+
+                    # ── 連結 ──
+                    href = a_tag.get('href', '')
+                    if href.startswith('/'):
+                        href = f"https://www.msa.gov.cn{href}"
+                    elif not href.startswith('http'):
+                        href = ''
+
+                    # ── 日期：優先從 <a> 內的 .time span 取，否則找父元素的 span ──
+                    publish_time = ''
+                    time_span = a_tag.find(class_='time')
+                    if time_span:
+                        publish_time = time_span.get_text(strip=True)
+                    else:
+                        # 往父層找日期
+                        parent = a_tag.parent
+                        for _ in range(3):  # 最多往上找 3 層
+                            if parent is None:
+                                break
+                            spans = parent.find_all(['span', 'em', 'i'])
+                            for sp in spans:
+                                sp_text = sp.get_text(strip=True)
+                                if re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', sp_text):
+                                    publish_time = sp_text
+                                    break
+                            if publish_time:
+                                break
+                            parent = parent.parent
+
+                    # 如果還是找不到，從 <a> 的完整文字中提取
+                    if not publish_time:
+                        full_text = a_tag.get_text()
+                        m = re.search(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', full_text)
+                        if m:
+                            publish_time = m.group()
+
+                    items.append({
+                        'title':        title,
+                        'link':         href,
+                        'publish_time': publish_time,
+                    })
+
+                except Exception as e:
+                    print(f"    ⚠️ 解析單筆連結失敗: {e}")
+                    continue
+
+        except Exception as e:
+            print(f"    ❌ BS4 解析失敗: {e}")
+            traceback.print_exc()
+
+        return items
+
+    def _fetch_detail_coords(self, link):
+        """
+        開新分頁抓取詳情頁座標，含完整 timeout 保護。
+        回傳座標 list（可能為空）。
+        """
+        coordinates = []
+        if not link or link.startswith('javascript'):
+            return coordinates
+
+        try:
+            self.driver.execute_script("window.open('');")
+            self.driver.switch_to.window(self.driver.window_handles[-1])
+            self.driver.set_page_load_timeout(12)
+            try:
+                self.driver.get(link)
+                time.sleep(1.5)
+                page_coords = self.coord_extractor.extract_from_html(self.driver.page_source)
+                coordinates.extend(page_coords)
+                if page_coords:
+                    print(f"      📍 詳情頁取得 {len(page_coords)} 個座標")
+            except Exception as e:
+                print(f"      ⚠️ 詳情頁載入失敗: {type(e).__name__}")
+        except Exception as e:
+            print(f"      ⚠️ 開新分頁失敗: {e}")
+        finally:
+            try:
+                if len(self.driver.window_handles) > 1:
+                    self.driver.close()
+                    self.driver.switch_to.window(self.driver.window_handles[0])
+                    self.driver.set_page_load_timeout(120)
+            except Exception:
+                pass
+
+        return coordinates
+
+    # ── 核心爬取方法 ──────────────────────────────────────
+
     def scrape_bureau_warnings(self, bureau_name, bureau_element):
-        print(f"  🔍 抓取: {bureau_name}")
+        """
+        點擊指定海事局，等待列表載入後用 BS4 解析所有項目。
+        """
+        print(f"\n  🔍 抓取: {bureau_name}")
         max_retries = 3
+
         for retry in range(max_retries):
             try:
                 if retry > 0:
                     print(f"    🔄 重試第 {retry} 次...")
+                    time.sleep(3)
                     try:
                         bureau_element = self.driver.find_element(
                             By.XPATH,
                             f"//div[@class='nav_lv2_text' and contains(text(), '{bureau_name}')]"
                         )
                     except Exception:
-                        print(f"    ⚠️ 無法重新獲取元素: {bureau_name}")
-                        break
+                        print(f"    ⚠️ 無法重新獲取元素，跳過: {bureau_name}")
+                        return
 
+                # ── 點擊海事局選單項目 ──
                 self.driver.execute_script(
                     "arguments[0].scrollIntoView(true); arguments[0].click();",
                     bureau_element
                 )
+                print(f"    ✅ 已點擊 {bureau_name}")
                 time.sleep(2)
-                self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "right_main")))
 
-                processed_count = 0
-                max_items       = 100
+                # ── 三層等待 ──
+                if not self._wait_for_list_content(timeout=15):
+                    print(f"    ⚠️ {bureau_name} 列表未能載入，跳過")
+                    break
 
-                while processed_count < max_items:
-                    try:
-                        items = self.driver.find_elements(By.CSS_SELECTOR, ".right_main a")
-                        if processed_count >= len(items):
-                            break
-                        item = items[processed_count]
+                # ── BS4 解析列表 ──
+                raw_items = self._parse_items_from_bs4()
+                print(f"    📋 解析到 {len(raw_items)} 個項目（含未命中關鍵字的）")
 
-                        try:
-                            title = item.get_attribute('title') or item.text.strip()
-                            title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title)
-                            if not title:
-                                processed_count += 1
-                                continue
+                if not raw_items:
+                    print(f"    ⚠️ {bureau_name} 無項目，可能頁面結構已變更")
+                    break
 
-                            matched = self.check_keywords(title)
-                            if not matched:
-                                processed_count += 1
-                                continue
+                matched_count = 0
+                skipped_date  = 0
+                skipped_kw    = 0
 
-                            link = item.get_attribute('href') or ''
-                            if link.startswith('/'):
-                                link = f"https://www.msa.gov.cn{link}"
+                for item in raw_items:
+                    title        = item['title']
+                    link         = item['link']
+                    publish_time = item['publish_time']
 
-                            try:
-                                publish_time = item.find_element(
-                                    By.CSS_SELECTOR, ".time"
-                                ).text.strip()
-                            except Exception:
-                                m = re.search(r'\d{4}[-/年]\d{1,2}[-/月]\d{1,2}', item.text)
-                                publish_time = m.group() if m else ""
+                    # ── 日期篩選 ──
+                    if not publish_time:
+                        skipped_date += 1
+                        continue
 
-                            if publish_time:
-                                p_date = self.parse_date(publish_time)
-                                if p_date:
-                                    if p_date < self.cutoff_date:
-                                        processed_count += 1
-                                        continue
-                                    is_today   = p_date >= self.today_start
-                                    time_label = "🆕 今日" if is_today else "📚 歷史"
-                                    print(f"      {time_label} 資料: {publish_time}")
-                                else:
-                                    processed_count += 1
-                                    continue
-                            else:
-                                processed_count += 1
-                                continue
+                    p_date = self.parse_date(publish_time)
+                    if not p_date:
+                        skipped_date += 1
+                        continue
 
-                            coordinates  = []
-                            title_coords = self.coord_extractor.extract_coordinates(title)
-                            if title_coords:
-                                coordinates.extend(title_coords)
+                    if p_date < self.cutoff_date:
+                        skipped_date += 1
+                        continue
 
-                            if link and not link.startswith('javascript'):
-                                try:
-                                    self.driver.execute_script("window.open('');")
-                                    self.driver.switch_to.window(self.driver.window_handles[-1])
-                                    self.driver.set_page_load_timeout(10)
-                                    try:
-                                        self.driver.get(link)
-                                        time.sleep(1)
-                                        page_coords = self.coord_extractor.extract_from_html(
-                                            self.driver.page_source
-                                        )
-                                        for pc in page_coords:
-                                            if pc not in coordinates:
-                                                coordinates.append(pc)
-                                    except Exception as e:
-                                        print(f"      ⚠️ 頁面載入失敗: {e}")
-                                    finally:
-                                        try:
-                                            self.driver.close()
-                                            self.driver.switch_to.window(
-                                                self.driver.window_handles[0]
-                                            )
-                                            self.driver.set_page_load_timeout(120)
-                                        except Exception:
-                                            pass
-                                except Exception as e:
-                                    print(f"      ⚠️ 無法從網頁提取座標: {e}")
+                    is_today   = p_date >= self.today_start
+                    time_label = "🆕 今日" if is_today else "📚 歷史"
 
-                            db_data = (
-                                bureau_name, title, link, publish_time,
-                                ', '.join(matched),
-                                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                coordinates
-                            )
-                            is_new, w_id = self.db_manager.save_warning(
-                                db_data, source_type="CN_MSA"
-                            )
+                    # ── 關鍵字比對 ──
+                    matched = self.check_keywords(title)
+                    if not matched:
+                        skipped_kw += 1
+                        # Debug：印出未命中的標題，方便確認是否需要補關鍵字
+                        print(f"      ⬜ 未命中 [{publish_time}]: {title[:50]}")
+                        continue
 
-                            if is_new and w_id:
-                                warning_data = {
-                                    'id':          w_id,
-                                    'bureau':      bureau_name,
-                                    'title':       title,
-                                    'link':        link,
-                                    'time':        publish_time,
-                                    'keywords':    matched,
-                                    'source':      'CN_MSA',
-                                    'coordinates': coordinates,
-                                    'coord_source': 'text'
-                                }
-                                if is_today:
-                                    self.new_warnings_today.append(w_id)
-                                    self.captured_warnings_today.append(warning_data)
-                                    print(f"      ✅ 新警告 [今日]: {title[:40]}...")
-                                else:
-                                    self.new_warnings_history.append(w_id)
-                                    self.captured_warnings_history.append(warning_data)
-                                    print(f"      ✅ 新警告 [歷史]: {title[:40]}...")
-                            else:
-                                print(f"      ⏭️ 已存在")
+                    matched_count += 1
+                    print(f"      {time_label} ✅ [{publish_time}] {title[:50]} | 關鍵字: {matched}")
 
-                        except Exception as e:
-                            print(f"    ⚠️ 處理項目 {processed_count + 1} 時出錯: {e}")
+                    # ── 座標抓取 ──
+                    coordinates = self.coord_extractor.extract_coordinates(title)
+                    detail_coords = self._fetch_detail_coords(link)
+                    for dc in detail_coords:
+                        if dc not in coordinates:
+                            coordinates.append(dc)
 
-                        processed_count += 1
+                    # ── 存入資料庫 ──
+                    db_data = (
+                        bureau_name, title, link, publish_time,
+                        ', '.join(matched),
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        coordinates
+                    )
+                    is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
 
-                    except Exception as e:
-                        print(f"    ⚠️ 獲取項目列表時出錯: {e}")
-                        break
+                    if is_new and w_id:
+                        warning_data = {
+                            'id':           w_id,
+                            'bureau':       bureau_name,
+                            'title':        title,
+                            'link':         link,
+                            'time':         publish_time,
+                            'keywords':     matched,
+                            'source':       'CN_MSA',
+                            'coordinates':  coordinates,
+                            'coord_source': 'text',
+                        }
+                        if is_today:
+                            self.new_warnings_today.append(w_id)
+                            self.captured_warnings_today.append(warning_data)
+                            print(f"      💾 [今日] 已存入 DB (ID: {w_id})")
+                        else:
+                            self.new_warnings_history.append(w_id)
+                            self.captured_warnings_history.append(warning_data)
+                            print(f"      💾 [歷史] 已存入 DB (ID: {w_id})")
+                    else:
+                        print(f"      ⏭️  已存在，跳過")
 
-                print(f"    ✅ {bureau_name} 處理完成，共 {processed_count} 個項目")
-                break
+                print(
+                    f"    📊 {bureau_name} 完成 | "
+                    f"命中={matched_count} | "
+                    f"日期過濾={skipped_date} | "
+                    f"關鍵字未命中={skipped_kw}"
+                )
+                break  # 成功，跳出 retry 迴圈
 
             except Exception as e:
-                print(f"  ⚠️ 抓取 {bureau_name} 錯誤 (嘗試 {retry+1}/{max_retries}): {e}")
+                print(f"    ⚠️ 抓取 {bureau_name} 錯誤 (嘗試 {retry+1}/{max_retries}): {e}")
                 if retry == max_retries - 1:
-                    print(f"  ❌ {bureau_name} 已達最大重試次數")
-                else:
-                    time.sleep(3)
+                    print(f"    ❌ {bureau_name} 已達最大重試次數，放棄")
+                    traceback.print_exc()
 
     def scrape_all_bureaus(self):
-        print(f"\n🇨🇳 開始爬取中國海事局航行警告...")
+        """
+        主流程：
+        1. 載入海事局首頁
+        2. 展開「航行警告」選單
+        3. 取得所有子局清單
+        4. 逐一抓取
+        """
+        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v3.2)...")
+        print(f"  🌐 目標: https://www.msa.gov.cn/page/outter/weather.jsp")
+
         try:
             self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
             time.sleep(5)
-            nav_btn = self.wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, "//span[contains(text(), '航行警告')]")
+            print("  ✅ 首頁載入完成")
+
+            # ── Debug：確認頁面標題 ──
+            print(f"  📄 頁面標題: {self.driver.title}")
+
+            # ── 點擊「航行警告」選單 ──
+            try:
+                nav_btn = self.wait.until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, "//span[contains(text(), '航行警告')]")
+                    )
                 )
+                self.driver.execute_script("arguments[0].click();", nav_btn)
+                print("  ✅ 已點擊「航行警告」選單")
+                time.sleep(3)
+            except Exception as e:
+                print(f"  ❌ 找不到「航行警告」按鈕: {e}")
+                print("  🔎 嘗試列出頁面所有 span 文字...")
+                spans = self.driver.find_elements(By.TAG_NAME, 'span')
+                span_texts = [s.text.strip() for s in spans if s.text.strip()][:20]
+                print(f"  📋 前20個 span: {span_texts}")
+                raise
+
+            # ── 取得子局清單 ──
+            bureau_elements = self.driver.find_elements(
+                By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text"
             )
-            self.driver.execute_script("arguments[0].click();", nav_btn)
-            time.sleep(3)
+            bureaus = [b.text.strip() for b in bureau_elements if b.text.strip()]
+            print(f"  📍 找到 {len(bureaus)} 個海事局: {bureaus}")
 
-            bureaus = [
-                b.text.strip()
-                for b in self.driver.find_elements(
-                    By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text"
-                )
-                if b.text.strip()
-            ]
-            print(f"  📍 找到 {len(bureaus)} 個海事局")
+            # 若選單抓取失敗，使用備用清單
+            if not bureaus:
+                print("  ⚠️ 選單抓取失敗，改用備用海事局清單")
+                bureaus = self.FALLBACK_BUREAUS
 
+            # ── 逐一爬取 ──
             for b_name in bureaus:
                 try:
+                    # 每次都重新查找元素，避免 stale element
                     elem = self.driver.find_element(
                         By.XPATH,
                         f"//div[@class='nav_lv2_text' and contains(text(), '{b_name}')]"
@@ -1782,7 +1783,7 @@ class CNMSANavigationWarningsScraper:
         print(f"\n🇨🇳 中國海事局爬取完成:")
         print(f"   🆕 今日新增: {len(self.new_warnings_today)} 筆")
         print(f"   📚 歷史資料: {len(self.new_warnings_history)} 筆")
-        print(f"   📊 總計: {total_new} 筆")
+        print(f"   📊 總計新增: {total_new} 筆")
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
 
@@ -1809,11 +1810,11 @@ ENABLE_TEAMS_NOTIFICATIONS = os.getenv("ENABLE_TEAMS_NOTIFICATIONS", "true").low
 ENABLE_CN_MSA              = os.getenv("ENABLE_CN_MSA",  "true").lower() == "true"
 ENABLE_TW_MPB              = os.getenv("ENABLE_TW_MPB",  "true").lower() == "true"
 ENABLE_UKMTO               = os.getenv("ENABLE_UKMTO",   "true").lower() == "true"
-SCRAPE_DAYS                = int(os.getenv("SCRAPE_DAYS",       "3"))
+SCRAPE_DAYS                = int(os.getenv("SCRAPE_DAYS",       "7"))   # v3.2: 預設改為 7 天
 UKMTO_SCRAPE_DAYS          = int(os.getenv("UKMTO_SCRAPE_DAYS", "30"))
 
 print("\n" + "=" * 70)
-print("⚙️  系統設定檢查")
+print("⚙️  系統設定檢查 v3.2")
 print("=" * 70)
 print(f"📧 Email 通知: {'✅ 啟用' if ENABLE_EMAIL_NOTIFICATIONS and MAIL_USER else '❌ 停用'}")
 print(f"📢 Teams 通知: {'✅ 啟用' if ENABLE_TEAMS_NOTIFICATIONS and TEAMS_WEBHOOK else '❌ 停用'}")
@@ -1832,7 +1833,7 @@ print("=" * 70 + "\n")
 if __name__ == "__main__":
     try:
         print("\n" + "=" * 70)
-        print("🌊 海事警告監控系統啟動 v3.1")
+        print("🌊 海事警告監控系統啟動 v3.2")
         print("=" * 70)
 
         print("\n📦 初始化資料庫...")
@@ -1935,7 +1936,6 @@ if __name__ == "__main__":
             if teams_notifier and ENABLE_TEAMS_NOTIFICATIONS:
 
                 def _to_teams_tuple(w):
-                    """將 warning_data dict 轉為 Teams 通知所需的 tuple 格式"""
                     return (
                         w.get('id'),
                         w.get('bureau'),
@@ -1986,13 +1986,10 @@ if __name__ == "__main__":
             h_coords = sum(len(w.get('coordinates', [])) for w in all_captured_history if w.get('source') == src)
 
             if src == "UKMTO":
-                all_ukmto = [
-                    w for w in all_captured_today + all_captured_history
-                    if w.get('source') == 'UKMTO'
-                ]
-                nd_count = len([w for w in all_ukmto if w.get('coord_source') == 'next_data'])
-                tx_count = len([w for w in all_ukmto if w.get('coord_source') == 'text'])
-                no_count = len([w for w in all_ukmto if w.get('coord_source') == 'none'])
+                all_ukmto = [w for w in all_captured_today + all_captured_history if w.get('source') == 'UKMTO']
+                nd_count  = len([w for w in all_ukmto if w.get('coord_source') == 'next_data'])
+                tx_count  = len([w for w in all_ukmto if w.get('coord_source') == 'text'])
+                no_count  = len([w for w in all_ukmto if w.get('coord_source') == 'none'])
                 print(f"\n  {icon}:")
                 print(f"     🆕 今日新增: {t_count} 筆 ({t_coords} 個座標點)")
                 print(f"     📚 歷史資料: {h_count} 筆 ({h_coords} 個座標點)")
@@ -2013,7 +2010,7 @@ if __name__ == "__main__":
         db_manager.print_statistics()
 
         print("\n" + "=" * 70)
-        print("🎉 系統執行完成 v3.1")
+        print("🎉 系統執行完成 v3.2")
         print("=" * 70)
 
     except KeyboardInterrupt:
