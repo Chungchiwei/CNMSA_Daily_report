@@ -3,7 +3,7 @@
 """
 統一海事警告監控系統 (中國海事局 + 台灣航港局 + UKMTO)
 支援經緯度提取、Teams 通知、Email 報告
-版本: 3.2 - CN_MSA 爬蟲重構：強化等待、BS4解析、詳細Debug
+版本: 3.5 - CN_MSA 改為純 requests，移除 Selenium 依賴
 """
 
 import platform
@@ -24,6 +24,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from dotenv import load_dotenv
+# ✅ 只保留 UKMTO / TW_MPB 仍需要的 Selenium import
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -57,7 +58,7 @@ if os.name == 'nt':
     sys.stderr = ErrorFilter(sys.stderr)
 
 
-# ==================== 2. 座標提取器 (增強版) ====================
+# ==================== 2. 座標提取器 (v3.5 修正版) ====================
 class CoordinateExtractor:
     def __init__(self):
         self.patterns = [
@@ -100,9 +101,9 @@ class CoordinateExtractor:
         groups = match.groups()
         if len(groups) == 4 and '\\.' in pattern and 'degree' not in pattern:
             try:
-                lat = float(groups[0])
+                lat     = float(groups[0])
                 lat_dir = groups[1].upper()
-                lon = float(groups[2])
+                lon     = float(groups[2])
                 lon_dir = groups[3].upper()
                 if lat_dir in ['S', 's', '南']:
                     lat = -lat
@@ -151,21 +152,33 @@ class CoordinateExtractor:
         if not coord or len(coord) != 2:
             return False
         lat, lon = coord
-        if lat < -90 or lat > 90:
+        if not (-90 <= lat <= 90):
             return False
-        if lon < -180 or lon > 180:
+        if not (-180 <= lon <= 180):
             return False
-        if not (-60 <= lat <= 60 and 60 <= lon <= 180):
+        # ✅ 修正：中國沿海 lon 最小約 108°，原本 60° 下限過嚴
+        # 涵蓋範圍：東亞 + 中東 + 非洲東岸（UKMTO 活動區域）
+        if not (-60 <= lat <= 60 and 30 <= lon <= 180):
             return False
         return True
 
     def extract_from_html(self, html_content):
+        """
+        ✅ 修正：原本 find('div', {'class': 'text', 'id': 'ch_p'}) 是 AND 條件
+        改為依序嘗試 class='text' 或 id='ch_p'
+        """
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
-            content_div = soup.find('div', {'class': 'text', 'id': 'ch_p'})
+            content_div = (
+                soup.find('div', class_='text') or
+                soup.find('div', id='ch_p')     or
+                soup.find('div', class_='TRS_Editor') or
+                soup.find('div', class_='content') or
+                soup.find('article')
+            )
             if content_div:
                 return self.extract_coordinates(content_div.get_text())
-            return self.extract_coordinates(html_content)
+            return self.extract_coordinates(soup.get_text())
         except Exception as e:
             print(f"    ⚠️ HTML 解析失敗: {e}")
             return []
@@ -1325,19 +1338,10 @@ class TWMaritimePortBureauScraper:
 
 # ==================== 7. 中國海事局爬蟲 (v3.5 - 純 requests 版) ====================
 class CNMSANavigationWarningsScraper:
-    """
-    v3.5 改動重點：
-    - 完全移除 Selenium，改用純 requests + BeautifulSoup
-    - 新網址: https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html
-    - 各局連結從硬編碼清單取得（動態抓取作為優先，失敗自動 fallback）
-    - 列表解析：table > tr > td 結構（已實測確認）
-    - 詳情頁座標：requests 抓取，timeout 保護
-    """
 
     BASE_URL  = "https://www.msa.gov.cn"
     INDEX_URL = "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html"
 
-    # 硬編碼備用清單（從實際 HTML 提取，動態抓取失敗時使用）
     HARDCODED_BUREAUS = [
         ("上海海事局",       "/94df14ce1110415da44e67593e76619f/index.jhtml"),
         ("天津海事局",       "/bdba5fad6e5d48679f970fcf8efb8636/index.jhtml"),
@@ -1364,7 +1368,6 @@ class CNMSANavigationWarningsScraper:
         self.keywords        = keyword_manager.get_keywords()
         self.teams_notifier  = teams_notifier
         self.coord_extractor = coord_extractor
-        # headless 參數保留但不使用（相容舊介面）
 
         self.days        = days
         self.cutoff_date = datetime.now() - timedelta(days=days)
@@ -1378,21 +1381,13 @@ class CNMSANavigationWarningsScraper:
         self.session = self._build_session()
 
         print("🇨🇳 初始化中國海事局爬蟲 v3.5 (純 requests)...")
-        print(f"  🌐 新網址: {self.INDEX_URL}")
-        print(f"  📅 抓取範圍: 最近 {days} 天 | "
-              f"截止: {self.cutoff_date.strftime('%Y-%m-%d')} | "
-              f"今日: {self.today_start.strftime('%Y-%m-%d')}")
-
-    # ── Session ──────────────────────────────────────────
+        print(f"  🌐 {self.INDEX_URL}")
+        print(f"  📅 最近 {days} 天 | 截止: {self.cutoff_date.strftime('%Y-%m-%d')} | 今日: {self.today_start.strftime('%Y-%m-%d')}")
 
     def _build_session(self):
         s = requests.Session()
         s.headers.update({
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/124.0.0.0 Safari/537.36'
-            ),
+            'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -1402,25 +1397,21 @@ class CNMSANavigationWarningsScraper:
         s.verify = False
         return s
 
-    # ── HTTP 工具 ─────────────────────────────────────────
-
     def _get_soup(self, url, timeout=20):
-        """帶重試的 GET，回傳 BeautifulSoup 或 None"""
         for attempt in range(3):
             try:
                 resp = self.session.get(url, timeout=timeout)
                 if resp.status_code == 200:
                     resp.encoding = resp.apparent_encoding or 'utf-8'
-                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    soup  = BeautifulSoup(resp.text, 'html.parser')
                     title = soup.title.string if soup.title else ''
-                    if 'ACCESS DENIED' in title.upper() or 'FORBIDDEN' in title.upper():
+                    if any(k in title.upper() for k in ['ACCESS DENIED', 'FORBIDDEN']):
                         print(f"    ⛔ 被封鎖 (attempt {attempt+1})")
                         time.sleep(3)
                         continue
                     return soup
-                else:
-                    print(f"    ⚠️ HTTP {resp.status_code} (attempt {attempt+1}): {url[:60]}")
-                    time.sleep(2)
+                print(f"    ⚠️ HTTP {resp.status_code} (attempt {attempt+1}): {url[:60]}")
+                time.sleep(2)
             except requests.exceptions.Timeout:
                 print(f"    ⚠️ Timeout (attempt {attempt+1}): {url[:60]}")
                 time.sleep(3)
@@ -1428,8 +1419,6 @@ class CNMSANavigationWarningsScraper:
                 print(f"    ⚠️ 請求失敗 (attempt {attempt+1}): {type(e).__name__}")
                 time.sleep(2)
         return None
-
-    # ── 工具方法 ──────────────────────────────────────────
 
     def check_keywords(self, text):
         if not text:
@@ -1453,17 +1442,9 @@ class CNMSANavigationWarningsScraper:
                 pass
         return None
 
-    # ── Step 1：取得各局連結清單 ──────────────────────────
-
     def _fetch_bureau_list(self):
-        """
-        從首頁動態解析各局連結。
-        結構：li.nav_lv2_list > a[href] + div.nav_lv2_text
-        失敗時自動 fallback 到硬編碼清單。
-        """
-        print(f"  📡 動態抓取各局連結...")
+        print("  📡 動態抓取各局連結...")
         soup = self._get_soup(self.INDEX_URL)
-
         if not soup:
             print("  ⚠️ 首頁抓取失敗，使用硬編碼清單")
             return self._build_hardcoded_list()
@@ -1489,39 +1470,29 @@ class CNMSANavigationWarningsScraper:
         return self._build_hardcoded_list()
 
     def _build_hardcoded_list(self):
-        result = []
-        for name, path in self.HARDCODED_BUREAUS:
-            full_url = path if path.startswith('http') else f"{self.BASE_URL}{path}"
-            result.append((name, full_url))
+        result = [
+            (name, path if path.startswith('http') else f"{self.BASE_URL}{path}")
+            for name, path in self.HARDCODED_BUREAUS
+        ]
         print(f"  📋 硬編碼清單：{len(result)} 個局")
         return result
 
-    # ── Step 2：解析單一海事局列表頁 ─────────────────────
-
     def _extract_items(self, soup):
-        """
-        解析列表頁，回傳 [{title, link, publish_time}]
-        已確認的 DOM 結構：
-          table > tr > td[0]=<a>標題 / td[1]=日期
-        備用：ul > li > a + span(日期)
-        """
         items = []
         seen  = set()
 
         # ── 方法 A：table > tr > td（已實測確認）──
         for tr in soup.find_all('tr'):
-            tds = tr.find_all('td')
+            tds   = tr.find_all('td')
             if len(tds) < 2:
                 continue
             a_tag = tds[0].find('a', href=True)
             if not a_tag:
                 continue
-
             title = (a_tag.get('title') or a_tag.get_text(strip=True) or '').strip()
             title = re.sub(r'\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$', '', title).strip()
             if not title or len(title) < 4:
                 continue
-
             href = a_tag.get('href', '')
             if not href or href.startswith(('javascript:', '#')):
                 continue
@@ -1529,18 +1500,11 @@ class CNMSANavigationWarningsScraper:
                 href = f"{self.BASE_URL}{href}"
             elif not href.startswith('http'):
                 href = f"{self.BASE_URL}/{href}"
-
             publish_time = tds[1].get_text(strip=True)
-
             if href in seen:
                 continue
             seen.add(href)
-
-            items.append({
-                'title':        title,
-                'link':         href,
-                'publish_time': publish_time,
-            })
+            items.append({'title': title, 'link': href, 'publish_time': publish_time})
 
         if items:
             return items
@@ -1550,12 +1514,10 @@ class CNMSANavigationWarningsScraper:
             a_tag = li.find('a', href=True)
             if not a_tag:
                 continue
-
             title = (a_tag.get('title') or a_tag.get_text(strip=True) or '').strip()
             title = re.sub(r'\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$', '', title).strip()
             if not title or len(title) < 4:
                 continue
-
             href = a_tag.get('href', '')
             if not href or href.startswith(('javascript:', '#')):
                 continue
@@ -1563,7 +1525,6 @@ class CNMSANavigationWarningsScraper:
                 href = f"{self.BASE_URL}{href}"
             elif not href.startswith('http'):
                 href = f"{self.BASE_URL}/{href}"
-
             publish_time = ''
             for tag in li.find_all(['span', 'em', 'i', 'div']):
                 txt = tag.get_text(strip=True)
@@ -1574,55 +1535,40 @@ class CNMSANavigationWarningsScraper:
                 m = re.search(r'(\d{4}-\d{2}-\d{2})', li.get_text())
                 if m:
                     publish_time = m.group(1)
-
             if href in seen:
                 continue
             seen.add(href)
-
-            items.append({
-                'title':        title,
-                'link':         href,
-                'publish_time': publish_time,
-            })
+            items.append({'title': title, 'link': href, 'publish_time': publish_time})
 
         return items
 
-    # ── Step 3：詳情頁座標抓取 ───────────────────────────
-
+    # ✅ 修正：縮排正確，屬於 class 內部
     def _fetch_detail_coords(self, link):
         """用 requests 抓詳情頁，提取座標"""
         if not link or link.startswith('javascript'):
             return []
-    
         soup = self._get_soup(link, timeout=15)
         if not soup:
             return []
-    
-        # 優先用 extract_from_html（傳整個 HTML 字串）
-        # 若 coord_extractor 沒有這個方法，fallback 到 extract_coordinates（傳純文字）
         try:
             if hasattr(self.coord_extractor, 'extract_from_html'):
                 coords = self.coord_extractor.extract_from_html(str(soup))
             else:
                 content = (
-                    soup.find('div', class_='text')      or
-                    soup.find('div', id='ch_p')           or
-                    soup.find('div', class_='TRS_Editor') or
-                    soup.find('div', class_='content')    or
-                    soup.find('article')                  or
+                    soup.find('div', class_='text')       or
+                    soup.find('div', id='ch_p')            or
+                    soup.find('div', class_='TRS_Editor')  or
+                    soup.find('div', class_='content')     or
+                    soup.find('article')                   or
                     soup
                 )
                 coords = self.coord_extractor.extract_coordinates(content.get_text())
         except Exception as e:
             print(f"      ⚠️ 座標提取失敗: {type(e).__name__}: {e}")
             coords = []
-    
         if coords:
             print(f"      📍 詳情頁取得 {len(coords)} 個座標")
         return coords
-
-
-    # ── Step 4：處理項目（篩選 + 存 DB）─────────────────
 
     def _process_items(self, items, bureau_name):
         matched_count = 0
@@ -1636,8 +1582,6 @@ class CNMSANavigationWarningsScraper:
 
             if not title:
                 continue
-
-            # ── 日期篩選 ──
             if not publish_time:
                 skipped_date += 1
                 continue
@@ -1649,7 +1593,6 @@ class CNMSANavigationWarningsScraper:
             is_today   = p_date >= self.today_start
             time_label = "🆕 今日" if is_today else "📚 歷史"
 
-            # ── 關鍵字比對 ──
             matched = self.check_keywords(title)
             if not matched:
                 skipped_kw += 1
@@ -1658,13 +1601,11 @@ class CNMSANavigationWarningsScraper:
             matched_count += 1
             print(f"      {time_label} ✅ [{publish_time}] {title[:55]} | {matched[:3]}")
 
-            # ── 座標 ──
             coordinates = self.coord_extractor.extract_coordinates(title)
             for dc in self._fetch_detail_coords(link):
                 if dc not in coordinates:
                     coordinates.append(dc)
 
-            # ── 存 DB ──
             db_data = (
                 bureau_name, title, link, publish_time,
                 ', '.join(matched),
@@ -1701,18 +1642,15 @@ class CNMSANavigationWarningsScraper:
             f"命中={matched_count} | 日期過濾={skipped_date} | 關鍵字未命中={skipped_kw}"
         )
 
-    # ── 主入口 ────────────────────────────────────────────
-
     def scrape_all_bureaus(self):
         print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v3.5)...")
         print(f"  🌐 {self.INDEX_URL}")
-
         try:
             bureau_list = self._fetch_bureau_list()
             print(f"\n  📍 共 {len(bureau_list)} 個海事局待爬取")
 
             for bureau_name, bureau_url in bureau_list:
-                print(f"\n  🔍 抓取: {bureau_name}")
+                print(f"\n  🔍 {bureau_name}")
                 print(f"     {bureau_url}")
 
                 soup = self._get_soup(bureau_url)
@@ -1720,26 +1658,21 @@ class CNMSANavigationWarningsScraper:
                     print(f"    ❌ 頁面抓取失敗，跳過")
                     continue
 
-                page_title = soup.title.string.strip() if soup.title else '(無標題)'
-                print(f"    📄 {page_title}")
-
                 items = self._extract_items(soup)
                 print(f"    📋 解析到 {len(items)} 個項目", end="")
 
                 if not items:
                     print()
-                    # Debug：印出前5個連結
                     for a in soup.find_all('a', href=True)[:5]:
                         print(f"    🔗 {a.get('href','')} | {a.get_text(strip=True)[:40]}")
                     time.sleep(1)
                     continue
 
-                # 顯示日期範圍
                 dates = [i['publish_time'] for i in items if i['publish_time']]
                 print(f" | 日期: {min(dates)} ~ {max(dates)}" if dates else "")
 
                 self._process_items(items, bureau_name)
-                time.sleep(1)  # 禮貌性延遲
+                time.sleep(1)
 
         except Exception as e:
             print(f"❌ 中國海事局爬取錯誤: {e}")
