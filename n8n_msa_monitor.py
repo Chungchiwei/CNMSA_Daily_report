@@ -1336,33 +1336,41 @@ class TWMaritimePortBureauScraper:
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
 
-# ==================== 7. 中國海事局爬蟲 (v3.5 - 純 requests 版) ====================
+# ==================== 7. 中國海事局爬蟲 (v4.0 - 商船航行安全過濾版) ====================
 class CNMSANavigationWarningsScraper:
 
     BASE_URL  = "https://www.msa.gov.cn"
     INDEX_URL = "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html"
 
+    # ── 局別清單：新增 scope 欄位 ──────────────────────────────────────────
+    #   "ocean"  = 沿海/開放海域，直接影響商船
+    #   "coastal" = 半封閉沿岸，仍有國際商港，保留但可視需求降權
+    #   "inland" = 純內河，跳過
     HARDCODED_BUREAUS = [
-        ("上海海事局",       "/94df14ce1110415da44e67593e76619f/index.jhtml"),
-        ("天津海事局",       "/bdba5fad6e5d48679f970fcf8efb8636/index.jhtml"),
-        ("辽宁海事局",       "/c8896863b1014c438705536a03eb46ff/index.jhtml"),
-        ("河北海事局",       "/93b73989d22045f9bc3270a6eba35180/index.jhtml"),
-        ("山东海事局",       "/36ea3354c8f84953aba082d6d989c750/index.jhtml"),
-        ("浙江海事局",       "/8e10ea74eb9e4c9690f8f891968add80/index.jhtml"),
-        ("福建海事局",       "/7b08405760384570a0fb44e9204c4b1d/index.jhtml"),
-        ("广东海事局",       "/1e478d409e854918bf12478b8a19f4a8/index.jhtml"),
-        ("广西海事局",       "/86de2fffff2c47f98359fd1f20d6508f/index.jhtml"),
-        ("海南海事局",       "/d3340711057b494b8fa09eedc4c5ead9/index.jhtml"),
-        ("长江海事局",       "/9340423406cc4507b2fb8af2492d2a3d/index.jhtml"),
-        ("江苏海事局",       "/b5b0f3c7630d4967b1e6b06208575d15/index.jhtml"),
-        ("深圳海事局",       "/325fdc0892b44313a63ee5c165be98ec/index.jhtml"),
-        ("连云港海事局",     "/fa4501f3dbe44f70bc726f27132d4e04/index.jhtml"),
-        ("江苏省地方海事局", "/d14ed012960b4064971270459a4a0d4d/index.jhtml"),
-        ("江西省地方海事局", "/html/cnmsa/hxaq/aqxx/hxjg/jxsdfhsju/index.html"),
+        ("上海海事局",       "/94df14ce1110415da44e67593e76619f/index.jhtml",  "ocean"),
+        ("天津海事局",       "/bdba5fad6e5d48679f970fcf8efb8636/index.jhtml",  "ocean"),
+        ("辽宁海事局",       "/c8896863b1014c438705536a03eb46ff/index.jhtml",  "ocean"),
+        ("山东海事局",       "/36ea3354c8f84953aba082d6d989c750/index.jhtml",  "ocean"),
+        ("浙江海事局",       "/8e10ea74eb9e4c9690f8f891968add80/index.jhtml",  "ocean"),
+        ("福建海事局",       "/7b08405760384570a0fb44e9204c4b1d/index.jhtml",  "ocean"),
+        ("广东海事局",       "/1e478d409e854918bf12478b8a19f4a8/index.jhtml",  "ocean"),
+        ("广西海事局",       "/86de2fffff2c47f98359fd1f20d6508f/index.jhtml",  "ocean"),
+        ("海南海事局",       "/d3340711057b494b8fa09eedc4c5ead9/index.jhtml",  "ocean"),
+        ("深圳海事局",       "/325fdc0892b44313a63ee5c165be98ec/index.jhtml",  "ocean"),
+        ("连云港海事局",     "/fa4501f3dbe44f70bc726f27132d4e04/index.jhtml",  "ocean"),
+        ("河北海事局",       "/93b73989d22045f9bc3270a6eba35180/index.jhtml",  "coastal"),
+        ("江苏海事局",       "/b5b0f3c7630d4967b1e6b06208575d15/index.jhtml",  "coastal"),
+        ("江苏省地方海事局", "/d14ed012960b4064971270459a4a0d4d/index.jhtml",  "coastal"),
+        # ↓ 純內河，不影響商船海上航行，直接跳過
+        ("长江海事局",       "/9340423406cc4507b2fb8af2492d2a3d/index.jhtml",  "inland"),
+        ("江西省地方海事局", "/html/cnmsa/hxaq/aqxx/hxjg/jxsdfhsju/index.html", "inland"),
     ]
 
+    # 需要爬取的 scope，可在初始化時覆寫
+    ACTIVE_SCOPES = {"ocean", "coastal"}
+
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor,
-                 headless=True, days=7):
+                 headless=True, days=7, active_scopes=None):
         self.db_manager      = db_manager
         self.keyword_manager = keyword_manager
         self.keywords        = keyword_manager.get_keywords()
@@ -1373,6 +1381,9 @@ class CNMSANavigationWarningsScraper:
         self.cutoff_date = datetime.now() - timedelta(days=days)
         self.today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
+        # 允許外部傳入覆寫，預設只爬 ocean + coastal
+        self.active_scopes = set(active_scopes) if active_scopes else self.ACTIVE_SCOPES
+
         self.new_warnings_today        = []
         self.new_warnings_history      = []
         self.captured_warnings_today   = []
@@ -1380,10 +1391,12 @@ class CNMSANavigationWarningsScraper:
 
         self.session = self._build_session()
 
-        print("🇨🇳 初始化中國海事局爬蟲 v3.5 (純 requests)...")
+        print("🇨🇳 初始化中國海事局爬蟲 v4.0 (商船航行安全過濾版)...")
         print(f"  🌐 {self.INDEX_URL}")
         print(f"  📅 最近 {days} 天 | 截止: {self.cutoff_date.strftime('%Y-%m-%d')} | 今日: {self.today_start.strftime('%Y-%m-%d')}")
+        print(f"  🔍 啟用局別範圍: {self.active_scopes}")
 
+    # ── Session 建立（不變）────────────────────────────────────────────────
     def _build_session(self):
         s = requests.Session()
         s.headers.update({
@@ -1397,6 +1410,7 @@ class CNMSANavigationWarningsScraper:
         s.verify = False
         return s
 
+    # ── 基礎工具（不變）───────────────────────────────────────────────────
     def _get_soup(self, url, timeout=20):
         for attempt in range(3):
             try:
@@ -1442,12 +1456,21 @@ class CNMSANavigationWarningsScraper:
                 pass
         return None
 
+    # ── 局別清單建立：動態抓取 + 硬編碼備援，統一套用 scope 過濾 ──────────
     def _fetch_bureau_list(self):
+        """
+        回傳 list of (name, url, scope)
+        動態抓取的局別無法判斷 scope，預設標記為 'ocean' 以保守保留；
+        若與硬編碼清單名稱吻合，則沿用硬編碼的 scope。
+        """
         print("  📡 動態抓取各局連結...")
         soup = self._get_soup(self.INDEX_URL)
         if not soup:
             print("  ⚠️ 首頁抓取失敗，使用硬編碼清單")
             return self._build_hardcoded_list()
+
+        # 建立硬編碼 scope 查找表（以局名為 key）
+        scope_map = {name: scope for name, _, scope in self.HARDCODED_BUREAUS}
 
         bureaus = []
         for li in soup.find_all('li', class_='nav_lv2_list'):
@@ -1460,7 +1483,9 @@ class CNMSANavigationWarningsScraper:
             if not name or not href:
                 continue
             full_url = href if href.startswith('http') else f"{self.BASE_URL}{href}"
-            bureaus.append((name, full_url))
+            # 查找 scope，未知局別預設 'ocean'（保守保留）
+            scope = scope_map.get(name, 'ocean')
+            bureaus.append((name, full_url, scope))
 
         if bureaus:
             print(f"  ✅ 動態抓取成功，共 {len(bureaus)} 個局")
@@ -1471,17 +1496,18 @@ class CNMSANavigationWarningsScraper:
 
     def _build_hardcoded_list(self):
         result = [
-            (name, path if path.startswith('http') else f"{self.BASE_URL}{path}")
-            for name, path in self.HARDCODED_BUREAUS
+            (name, path if path.startswith('http') else f"{self.BASE_URL}{path}", scope)
+            for name, path, scope in self.HARDCODED_BUREAUS
         ]
         print(f"  📋 硬編碼清單：{len(result)} 個局")
         return result
 
+    # ── 項目解析（不變）───────────────────────────────────────────────────
     def _extract_items(self, soup):
         items = []
         seen  = set()
 
-        # ── 方法 A：table > tr > td（已實測確認）──
+        # 方法 A：table > tr > td
         for tr in soup.find_all('tr'):
             tds   = tr.find_all('td')
             if len(tds) < 2:
@@ -1509,7 +1535,7 @@ class CNMSANavigationWarningsScraper:
         if items:
             return items
 
-        # ── 方法 B：ul > li（備用）──
+        # 方法 B：ul > li（備用）
         for li in soup.find_all('li'):
             a_tag = li.find('a', href=True)
             if not a_tag:
@@ -1542,7 +1568,6 @@ class CNMSANavigationWarningsScraper:
 
         return items
 
-    # ✅ 修正：縮排正確，屬於 class 內部
     def _fetch_detail_coords(self, link):
         """用 requests 抓詳情頁，提取座標"""
         if not link or link.startswith('javascript'):
@@ -1570,6 +1595,7 @@ class CNMSANavigationWarningsScraper:
             print(f"      📍 詳情頁取得 {len(coords)} 個座標")
         return coords
 
+    # ── 項目處理（不變）───────────────────────────────────────────────────
     def _process_items(self, items, bureau_name):
         matched_count = 0
         skipped_date  = 0
@@ -1642,15 +1668,27 @@ class CNMSANavigationWarningsScraper:
             f"命中={matched_count} | 日期過濾={skipped_date} | 關鍵字未命中={skipped_kw}"
         )
 
+    # ── 主爬取流程：新增 scope 過濾 ───────────────────────────────────────
     def scrape_all_bureaus(self):
-        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v3.5)...")
+        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v4.0)...")
         print(f"  🌐 {self.INDEX_URL}")
         try:
             bureau_list = self._fetch_bureau_list()
-            print(f"\n  📍 共 {len(bureau_list)} 個海事局待爬取")
 
-            for bureau_name, bureau_url in bureau_list:
-                print(f"\n  🔍 {bureau_name}")
+            # ── scope 過濾：inland 直接跳過，不發任何 HTTP 請求 ──
+            active_bureaus  = [(n, u, s) for n, u, s in bureau_list if s in self.active_scopes]
+            skipped_bureaus = [(n, s)    for n, _, s in bureau_list if s not in self.active_scopes]
+
+            if skipped_bureaus:
+                print(f"\n  ⏭️  跳過 {len(skipped_bureaus)} 個內河/非商船局:")
+                for name, scope in skipped_bureaus:
+                    print(f"     [{scope}] {name}")
+
+            print(f"\n  📍 共 {len(active_bureaus)} 個局待爬取")
+
+            for bureau_name, bureau_url, scope in active_bureaus:
+                scope_tag = "🌊" if scope == "ocean" else "⚓"
+                print(f"\n  🔍 {scope_tag} {bureau_name}  [{scope}]")
                 print(f"     {bureau_url}")
 
                 soup = self._get_soup(bureau_url)
@@ -1684,6 +1722,7 @@ class CNMSANavigationWarningsScraper:
         print(f"   📚 歷史資料: {len(self.new_warnings_history)} 筆")
         print(f"   📊 總計新增: {total_new} 筆")
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
+
 
 
 # ==================== 8. 環境變數讀取 ====================
