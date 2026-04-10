@@ -1323,65 +1323,48 @@ class TWMaritimePortBureauScraper:
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
 
-# ==================== 7. 中國海事局爬蟲 (v3.2 - 完整重構) ====================
+# ==================== 7. 中國海事局爬蟲 (v3.5 - 純 requests 版) ====================
 class CNMSANavigationWarningsScraper:
     """
-    改動重點 (v3.2)：
-    1. scrape_all_bureaus()  — 加入頁面結構 debug，確認選單是否正常展開
-    2. scrape_bureau_warnings() — 三層等待策略 + BS4 解析取代 find_elements
-    3. _parse_item_from_bs4() — 獨立的項目解析方法，支援多種 DOM 結構
-    4. _fetch_detail_coords() — 獨立的詳情頁座標抓取，含 timeout 保護
-    5. 所有關鍵步驟加入詳細 debug 輸出，方便快速定位問題
+    v3.5 改動重點：
+    - 完全移除 Selenium，改用純 requests + BeautifulSoup
+    - 新網址: https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html
+    - 各局連結從硬編碼清單取得（動態抓取作為優先，失敗自動 fallback）
+    - 列表解析：table > tr > td 結構（已實測確認）
+    - 詳情頁座標：requests 抓取，timeout 保護
     """
 
-    # 中國海事局已知的各地方局名稱（備用，若選單抓取失敗時使用）
-    FALLBACK_BUREAUS = [
-        "天津海事局", "河北海事局", "辽宁海事局", "山东海事局",
-        "上海海事局", "江苏海事局", "浙江海事局", "福建海事局",
-        "广东海事局", "广西海事局", "海南海事局", "长江海事局",
-        "黑龙江海事局", "连云港海事局", "深圳海事局",
+    BASE_URL  = "https://www.msa.gov.cn"
+    INDEX_URL = "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html"
+
+    # 硬編碼備用清單（從實際 HTML 提取，動態抓取失敗時使用）
+    HARDCODED_BUREAUS = [
+        ("上海海事局",       "/94df14ce1110415da44e67593e76619f/index.jhtml"),
+        ("天津海事局",       "/bdba5fad6e5d48679f970fcf8efb8636/index.jhtml"),
+        ("辽宁海事局",       "/c8896863b1014c438705536a03eb46ff/index.jhtml"),
+        ("河北海事局",       "/93b73989d22045f9bc3270a6eba35180/index.jhtml"),
+        ("山东海事局",       "/36ea3354c8f84953aba082d6d989c750/index.jhtml"),
+        ("浙江海事局",       "/8e10ea74eb9e4c9690f8f891968add80/index.jhtml"),
+        ("福建海事局",       "/7b08405760384570a0fb44e9204c4b1d/index.jhtml"),
+        ("广东海事局",       "/1e478d409e854918bf12478b8a19f4a8/index.jhtml"),
+        ("广西海事局",       "/86de2fffff2c47f98359fd1f20d6508f/index.jhtml"),
+        ("海南海事局",       "/d3340711057b494b8fa09eedc4c5ead9/index.jhtml"),
+        ("长江海事局",       "/9340423406cc4507b2fb8af2492d2a3d/index.jhtml"),
+        ("江苏海事局",       "/b5b0f3c7630d4967b1e6b06208575d15/index.jhtml"),
+        ("深圳海事局",       "/325fdc0892b44313a63ee5c165be98ec/index.jhtml"),
+        ("连云港海事局",     "/fa4501f3dbe44f70bc726f27132d4e04/index.jhtml"),
+        ("江苏省地方海事局", "/d14ed012960b4064971270459a4a0d4d/index.jhtml"),
+        ("江西省地方海事局", "/html/cnmsa/hxaq/aqxx/hxjg/jxsdfhsju/index.html"),
     ]
 
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor,
-                 headless=True, days=3):
+                 headless=True, days=7):
         self.db_manager      = db_manager
         self.keyword_manager = keyword_manager
         self.keywords        = keyword_manager.get_keywords()
         self.teams_notifier  = teams_notifier
         self.coord_extractor = coord_extractor
-
-        print("🇨🇳 初始化中國海事局爬蟲 v3.2...")
-
-        options = webdriver.ChromeOptions()
-        if headless:
-            options.add_argument('--headless=new')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_argument(
-            'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        )
-        # 停用圖片加速載入，但保留 JS（JS 是動態載入必需的）
-        options.add_experimental_option(
-            'prefs', {'profile.managed_default_content_settings.images': 2}
-        )
-        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
-        options.add_experimental_option('useAutomationExtension', False)
-
-        try:
-            service = Service(ChromeDriverManager().install())
-            if platform.system() == 'Windows':
-                service.creation_flags = subprocess.CREATE_NO_WINDOW
-            self.driver = webdriver.Chrome(service=service, options=options)
-            self.driver.set_page_load_timeout(120)
-            self.wait = WebDriverWait(self.driver, 20)
-            print("  ✅ WebDriver 啟動成功")
-        except Exception as e:
-            print(f"  ❌ WebDriver 啟動失敗: {e}")
-            raise
+        # headless 參數保留但不使用（相容舊介面）
 
         self.days        = days
         self.cutoff_date = datetime.now() - timedelta(days=days)
@@ -1392,18 +1375,68 @@ class CNMSANavigationWarningsScraper:
         self.captured_warnings_today   = []
         self.captured_warnings_history = []
 
-        print(f"  📅 抓取範圍: 最近 {days} 天 | 截止: {self.cutoff_date.strftime('%Y-%m-%d')} | 今日: {self.today_start.strftime('%Y-%m-%d')}")
+        self.session = self._build_session()
+
+        print("🇨🇳 初始化中國海事局爬蟲 v3.5 (純 requests)...")
+        print(f"  🌐 新網址: {self.INDEX_URL}")
+        print(f"  📅 抓取範圍: 最近 {days} 天 | "
+              f"截止: {self.cutoff_date.strftime('%Y-%m-%d')} | "
+              f"今日: {self.today_start.strftime('%Y-%m-%d')}")
+
+    # ── Session ──────────────────────────────────────────
+
+    def _build_session(self):
+        s = requests.Session()
+        s.headers.update({
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/124.0.0.0 Safari/537.36'
+            ),
+            'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection':      'keep-alive',
+            'Referer':         'https://www.msa.gov.cn/',
+        })
+        s.verify = False
+        return s
+
+    # ── HTTP 工具 ─────────────────────────────────────────
+
+    def _get_soup(self, url, timeout=20):
+        """帶重試的 GET，回傳 BeautifulSoup 或 None"""
+        for attempt in range(3):
+            try:
+                resp = self.session.get(url, timeout=timeout)
+                if resp.status_code == 200:
+                    resp.encoding = resp.apparent_encoding or 'utf-8'
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    title = soup.title.string if soup.title else ''
+                    if 'ACCESS DENIED' in title.upper() or 'FORBIDDEN' in title.upper():
+                        print(f"    ⛔ 被封鎖 (attempt {attempt+1})")
+                        time.sleep(3)
+                        continue
+                    return soup
+                else:
+                    print(f"    ⚠️ HTTP {resp.status_code} (attempt {attempt+1}): {url[:60]}")
+                    time.sleep(2)
+            except requests.exceptions.Timeout:
+                print(f"    ⚠️ Timeout (attempt {attempt+1}): {url[:60]}")
+                time.sleep(3)
+            except Exception as e:
+                print(f"    ⚠️ 請求失敗 (attempt {attempt+1}): {type(e).__name__}")
+                time.sleep(2)
+        return None
 
     # ── 工具方法 ──────────────────────────────────────────
 
     def check_keywords(self, text):
-        """關鍵字比對，回傳所有命中的關鍵字清單"""
         if not text:
             return []
         return [k for k in self.keywords if k.lower() in text.lower()]
 
     def parse_date(self, date_str):
-        """解析多種日期格式，回傳 datetime 或 None"""
         if not date_str:
             return None
         date_str = date_str.strip()
@@ -1412,7 +1445,6 @@ class CNMSANavigationWarningsScraper:
                 return datetime.strptime(date_str, fmt)
             except Exception:
                 continue
-        # 嘗試從字串中提取日期片段
         m = re.search(r'(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})', date_str)
         if m:
             try:
@@ -1421,363 +1453,284 @@ class CNMSANavigationWarningsScraper:
                 pass
         return None
 
-    def _wait_for_list_content(self, timeout=15):
-        """
-        三層等待策略：
-          1. 等待 .right_main 容器出現
-          2. 等待容器內有 <a> 連結（真正載入完成）
-          3. 額外 1 秒緩衝
-        回傳 True/False 表示是否成功
-        """
-        try:
-            # 層 1：容器出現
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "right_main"))
-            )
-            # 層 2：容器內有連結
-            WebDriverWait(self.driver, timeout).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".right_main a"))
-            )
-            time.sleep(1)  # 層 3：緩衝
-            return True
-        except Exception as e:
-            print(f"    ⚠️ 等待列表內容逾時: {e}")
-            return False
+    # ── Step 1：取得各局連結清單 ──────────────────────────
 
-    def _parse_items_from_bs4(self):
+    def _fetch_bureau_list(self):
         """
-        用 BeautifulSoup 解析當前頁面的 .right_main，
-        回傳 list of dict: [{title, link, publish_time}, ...]
-        支援兩種常見 DOM 結構：
-          A. <a title="..." href="..."><span class="time">日期</span></a>
-          B. <li><a href="...">標題</a><span>日期</span></li>
+        從首頁動態解析各局連結。
+        結構：li.nav_lv2_list > a[href] + div.nav_lv2_text
+        失敗時自動 fallback 到硬編碼清單。
+        """
+        print(f"  📡 動態抓取各局連結...")
+        soup = self._get_soup(self.INDEX_URL)
+
+        if not soup:
+            print("  ⚠️ 首頁抓取失敗，使用硬編碼清單")
+            return self._build_hardcoded_list()
+
+        bureaus = []
+        for li in soup.find_all('li', class_='nav_lv2_list'):
+            a_tag    = li.find('a', href=True)
+            name_div = li.find('div', class_='nav_lv2_text')
+            if not a_tag or not name_div:
+                continue
+            name = name_div.get_text(strip=True)
+            href = a_tag.get('href', '')
+            if not name or not href:
+                continue
+            full_url = href if href.startswith('http') else f"{self.BASE_URL}{href}"
+            bureaus.append((name, full_url))
+
+        if bureaus:
+            print(f"  ✅ 動態抓取成功，共 {len(bureaus)} 個局")
+            return bureaus
+
+        print("  ⚠️ 動態解析到 0 個局，使用硬編碼清單")
+        return self._build_hardcoded_list()
+
+    def _build_hardcoded_list(self):
+        result = []
+        for name, path in self.HARDCODED_BUREAUS:
+            full_url = path if path.startswith('http') else f"{self.BASE_URL}{path}"
+            result.append((name, full_url))
+        print(f"  📋 硬編碼清單：{len(result)} 個局")
+        return result
+
+    # ── Step 2：解析單一海事局列表頁 ─────────────────────
+
+    def _extract_items(self, soup):
+        """
+        解析列表頁，回傳 [{title, link, publish_time}]
+        已確認的 DOM 結構：
+          table > tr > td[0]=<a>標題 / td[1]=日期
+        備用：ul > li > a + span(日期)
         """
         items = []
-        try:
-            soup       = BeautifulSoup(self.driver.page_source, 'html.parser')
-            right_main = soup.find(class_='right_main')
+        seen  = set()
 
-            if not right_main:
-                print("    ❌ BS4 找不到 .right_main")
-                # Debug：印出頁面前 500 字元幫助診斷
-                body_text = soup.get_text()[:500].replace('\n', ' ')
-                print(f"    🔎 頁面內容預覽: {body_text}")
-                return items
+        # ── 方法 A：table > tr > td（已實測確認）──
+        for tr in soup.find_all('tr'):
+            tds = tr.find_all('td')
+            if len(tds) < 2:
+                continue
+            a_tag = tds[0].find('a', href=True)
+            if not a_tag:
+                continue
 
-            all_links = right_main.find_all('a')
-            print(f"    🔎 BS4 在 .right_main 找到 {len(all_links)} 個 <a> 連結")
+            title = (a_tag.get('title') or a_tag.get_text(strip=True) or '').strip()
+            title = re.sub(r'\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$', '', title).strip()
+            if not title or len(title) < 4:
+                continue
 
-            if not all_links:
-                # 進一步 debug：印出 right_main 的原始 HTML 前 300 字
-                print(f"    🔎 right_main HTML 預覽: {str(right_main)[:300]}")
-                return items
+            href = a_tag.get('href', '')
+            if not href or href.startswith(('javascript:', '#')):
+                continue
+            if href.startswith('/'):
+                href = f"{self.BASE_URL}{href}"
+            elif not href.startswith('http'):
+                href = f"{self.BASE_URL}/{href}"
 
-            for a_tag in all_links:
-                try:
-                    # ── 標題 ──
-                    title = (
-                        a_tag.get('title') or
-                        a_tag.get_text(strip=True) or
-                        ''
-                    )
-                    # 移除標題末尾的日期（常見格式：「標題 2026-04-07」）
-                    title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title).strip()
+            publish_time = tds[1].get_text(strip=True)
 
-                    if not title:
-                        continue
+            if href in seen:
+                continue
+            seen.add(href)
 
-                    # ── 連結 ──
-                    href = a_tag.get('href', '')
-                    if href.startswith('/'):
-                        href = f"https://www.msa.gov.cn{href}"
-                    elif not href.startswith('http'):
-                        href = ''
+            items.append({
+                'title':        title,
+                'link':         href,
+                'publish_time': publish_time,
+            })
 
-                    # ── 日期：優先從 <a> 內的 .time span 取，否則找父元素的 span ──
-                    publish_time = ''
-                    time_span = a_tag.find(class_='time')
-                    if time_span:
-                        publish_time = time_span.get_text(strip=True)
-                    else:
-                        # 往父層找日期
-                        parent = a_tag.parent
-                        for _ in range(3):  # 最多往上找 3 層
-                            if parent is None:
-                                break
-                            spans = parent.find_all(['span', 'em', 'i'])
-                            for sp in spans:
-                                sp_text = sp.get_text(strip=True)
-                                if re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', sp_text):
-                                    publish_time = sp_text
-                                    break
-                            if publish_time:
-                                break
-                            parent = parent.parent
+        if items:
+            return items
 
-                    # 如果還是找不到，從 <a> 的完整文字中提取
-                    if not publish_time:
-                        full_text = a_tag.get_text()
-                        m = re.search(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', full_text)
-                        if m:
-                            publish_time = m.group()
+        # ── 方法 B：ul > li（備用）──
+        for li in soup.find_all('li'):
+            a_tag = li.find('a', href=True)
+            if not a_tag:
+                continue
 
-                    items.append({
-                        'title':        title,
-                        'link':         href,
-                        'publish_time': publish_time,
-                    })
+            title = (a_tag.get('title') or a_tag.get_text(strip=True) or '').strip()
+            title = re.sub(r'\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$', '', title).strip()
+            if not title or len(title) < 4:
+                continue
 
-                except Exception as e:
-                    print(f"    ⚠️ 解析單筆連結失敗: {e}")
-                    continue
+            href = a_tag.get('href', '')
+            if not href or href.startswith(('javascript:', '#')):
+                continue
+            if href.startswith('/'):
+                href = f"{self.BASE_URL}{href}"
+            elif not href.startswith('http'):
+                href = f"{self.BASE_URL}/{href}"
 
-        except Exception as e:
-            print(f"    ❌ BS4 解析失敗: {e}")
-            traceback.print_exc()
+            publish_time = ''
+            for tag in li.find_all(['span', 'em', 'i', 'div']):
+                txt = tag.get_text(strip=True)
+                if re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', txt):
+                    publish_time = txt[:10]
+                    break
+            if not publish_time:
+                m = re.search(r'(\d{4}-\d{2}-\d{2})', li.get_text())
+                if m:
+                    publish_time = m.group(1)
+
+            if href in seen:
+                continue
+            seen.add(href)
+
+            items.append({
+                'title':        title,
+                'link':         href,
+                'publish_time': publish_time,
+            })
 
         return items
 
+    # ── Step 3：詳情頁座標抓取 ───────────────────────────
+
     def _fetch_detail_coords(self, link):
-        """
-        開新分頁抓取詳情頁座標，含完整 timeout 保護。
-        回傳座標 list（可能為空）。
-        """
-        coordinates = []
+        """用 requests 抓詳情頁，提取座標"""
         if not link or link.startswith('javascript'):
-            return coordinates
+            return []
+        soup = self._get_soup(link, timeout=15)
+        if not soup:
+            return []
+        content = (
+            soup.find('div', class_='text')       or
+            soup.find('div', id='ch_p')            or
+            soup.find('div', class_='TRS_Editor')  or
+            soup.find('div', class_='content')     or
+            soup.find('article')                   or
+            soup
+        )
+        coords = self.coord_extractor.extract_coordinates(content.get_text())
+        if coords:
+            print(f"      📍 詳情頁取得 {len(coords)} 個座標")
+        return coords
 
-        try:
-            self.driver.execute_script("window.open('');")
-            self.driver.switch_to.window(self.driver.window_handles[-1])
-            self.driver.set_page_load_timeout(12)
-            try:
-                self.driver.get(link)
-                time.sleep(1.5)
-                page_coords = self.coord_extractor.extract_from_html(self.driver.page_source)
-                coordinates.extend(page_coords)
-                if page_coords:
-                    print(f"      📍 詳情頁取得 {len(page_coords)} 個座標")
-            except Exception as e:
-                print(f"      ⚠️ 詳情頁載入失敗: {type(e).__name__}")
-        except Exception as e:
-            print(f"      ⚠️ 開新分頁失敗: {e}")
-        finally:
-            try:
-                if len(self.driver.window_handles) > 1:
-                    self.driver.close()
-                    self.driver.switch_to.window(self.driver.window_handles[0])
-                    self.driver.set_page_load_timeout(120)
-            except Exception:
-                pass
+    # ── Step 4：處理項目（篩選 + 存 DB）─────────────────
 
-        return coordinates
+    def _process_items(self, items, bureau_name):
+        matched_count = 0
+        skipped_date  = 0
+        skipped_kw    = 0
 
-    # ── 核心爬取方法 ──────────────────────────────────────
+        for item in items:
+            title        = item['title'].strip()
+            link         = item['link']
+            publish_time = item['publish_time'].strip()
 
-    def scrape_bureau_warnings(self, bureau_name, bureau_element):
-        """
-        點擊指定海事局，等待列表載入後用 BS4 解析所有項目。
-        """
-        print(f"\n  🔍 抓取: {bureau_name}")
-        max_retries = 3
+            if not title:
+                continue
 
-        for retry in range(max_retries):
-            try:
-                if retry > 0:
-                    print(f"    🔄 重試第 {retry} 次...")
-                    time.sleep(3)
-                    try:
-                        bureau_element = self.driver.find_element(
-                            By.XPATH,
-                            f"//div[@class='nav_lv2_text' and contains(text(), '{bureau_name}')]"
-                        )
-                    except Exception:
-                        print(f"    ⚠️ 無法重新獲取元素，跳過: {bureau_name}")
-                        return
+            # ── 日期篩選 ──
+            if not publish_time:
+                skipped_date += 1
+                continue
+            p_date = self.parse_date(publish_time)
+            if not p_date or p_date < self.cutoff_date:
+                skipped_date += 1
+                continue
 
-                # ── 點擊海事局選單項目 ──
-                self.driver.execute_script(
-                    "arguments[0].scrollIntoView(true); arguments[0].click();",
-                    bureau_element
-                )
-                print(f"    ✅ 已點擊 {bureau_name}")
-                time.sleep(2)
+            is_today   = p_date >= self.today_start
+            time_label = "🆕 今日" if is_today else "📚 歷史"
 
-                # ── 三層等待 ──
-                if not self._wait_for_list_content(timeout=15):
-                    print(f"    ⚠️ {bureau_name} 列表未能載入，跳過")
-                    break
+            # ── 關鍵字比對 ──
+            matched = self.check_keywords(title)
+            if not matched:
+                skipped_kw += 1
+                continue
 
-                # ── BS4 解析列表 ──
-                raw_items = self._parse_items_from_bs4()
-                print(f"    📋 解析到 {len(raw_items)} 個項目（含未命中關鍵字的）")
+            matched_count += 1
+            print(f"      {time_label} ✅ [{publish_time}] {title[:55]} | {matched[:3]}")
 
-                if not raw_items:
-                    print(f"    ⚠️ {bureau_name} 無項目，可能頁面結構已變更")
-                    break
+            # ── 座標 ──
+            coordinates = self.coord_extractor.extract_coordinates(title)
+            for dc in self._fetch_detail_coords(link):
+                if dc not in coordinates:
+                    coordinates.append(dc)
 
-                matched_count = 0
-                skipped_date  = 0
-                skipped_kw    = 0
+            # ── 存 DB ──
+            db_data = (
+                bureau_name, title, link, publish_time,
+                ', '.join(matched),
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                coordinates
+            )
+            is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
 
-                for item in raw_items:
-                    title        = item['title']
-                    link         = item['link']
-                    publish_time = item['publish_time']
+            if is_new and w_id:
+                warning_data = {
+                    'id':           w_id,
+                    'bureau':       bureau_name,
+                    'title':        title,
+                    'link':         link,
+                    'time':         publish_time,
+                    'keywords':     matched,
+                    'source':       'CN_MSA',
+                    'coordinates':  coordinates,
+                    'coord_source': 'text',
+                }
+                if is_today:
+                    self.new_warnings_today.append(w_id)
+                    self.captured_warnings_today.append(warning_data)
+                    print(f"      💾 [今日] DB ID: {w_id}")
+                else:
+                    self.new_warnings_history.append(w_id)
+                    self.captured_warnings_history.append(warning_data)
+                    print(f"      💾 [歷史] DB ID: {w_id}")
+            else:
+                print(f"      ⏭️  已存在")
 
-                    # ── 日期篩選 ──
-                    if not publish_time:
-                        skipped_date += 1
-                        continue
+        print(
+            f"    📊 {bureau_name} | "
+            f"命中={matched_count} | 日期過濾={skipped_date} | 關鍵字未命中={skipped_kw}"
+        )
 
-                    p_date = self.parse_date(publish_time)
-                    if not p_date:
-                        skipped_date += 1
-                        continue
-
-                    if p_date < self.cutoff_date:
-                        skipped_date += 1
-                        continue
-
-                    is_today   = p_date >= self.today_start
-                    time_label = "🆕 今日" if is_today else "📚 歷史"
-
-                    # ── 關鍵字比對 ──
-                    matched = self.check_keywords(title)
-                    if not matched:
-                        skipped_kw += 1
-                        # Debug：印出未命中的標題，方便確認是否需要補關鍵字
-                        print(f"      ⬜ 未命中 [{publish_time}]: {title[:50]}")
-                        continue
-
-                    matched_count += 1
-                    print(f"      {time_label} ✅ [{publish_time}] {title[:50]} | 關鍵字: {matched}")
-
-                    # ── 座標抓取 ──
-                    coordinates = self.coord_extractor.extract_coordinates(title)
-                    detail_coords = self._fetch_detail_coords(link)
-                    for dc in detail_coords:
-                        if dc not in coordinates:
-                            coordinates.append(dc)
-
-                    # ── 存入資料庫 ──
-                    db_data = (
-                        bureau_name, title, link, publish_time,
-                        ', '.join(matched),
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        coordinates
-                    )
-                    is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
-
-                    if is_new and w_id:
-                        warning_data = {
-                            'id':           w_id,
-                            'bureau':       bureau_name,
-                            'title':        title,
-                            'link':         link,
-                            'time':         publish_time,
-                            'keywords':     matched,
-                            'source':       'CN_MSA',
-                            'coordinates':  coordinates,
-                            'coord_source': 'text',
-                        }
-                        if is_today:
-                            self.new_warnings_today.append(w_id)
-                            self.captured_warnings_today.append(warning_data)
-                            print(f"      💾 [今日] 已存入 DB (ID: {w_id})")
-                        else:
-                            self.new_warnings_history.append(w_id)
-                            self.captured_warnings_history.append(warning_data)
-                            print(f"      💾 [歷史] 已存入 DB (ID: {w_id})")
-                    else:
-                        print(f"      ⏭️  已存在，跳過")
-
-                print(
-                    f"    📊 {bureau_name} 完成 | "
-                    f"命中={matched_count} | "
-                    f"日期過濾={skipped_date} | "
-                    f"關鍵字未命中={skipped_kw}"
-                )
-                break  # 成功，跳出 retry 迴圈
-
-            except Exception as e:
-                print(f"    ⚠️ 抓取 {bureau_name} 錯誤 (嘗試 {retry+1}/{max_retries}): {e}")
-                if retry == max_retries - 1:
-                    print(f"    ❌ {bureau_name} 已達最大重試次數，放棄")
-                    traceback.print_exc()
+    # ── 主入口 ────────────────────────────────────────────
 
     def scrape_all_bureaus(self):
-        """
-        主流程：
-        1. 載入海事局首頁
-        2. 展開「航行警告」選單
-        3. 取得所有子局清單
-        4. 逐一抓取
-        """
-        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v3.2)...")
-        print(f"  🌐 目標: https://www.msa.gov.cn/page/outter/weather.jsp")
+        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v3.5)...")
+        print(f"  🌐 {self.INDEX_URL}")
 
         try:
-            self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
-            time.sleep(5)
-            print("  ✅ 首頁載入完成")
+            bureau_list = self._fetch_bureau_list()
+            print(f"\n  📍 共 {len(bureau_list)} 個海事局待爬取")
 
-            # ── Debug：確認頁面標題 ──
-            print(f"  📄 頁面標題: {self.driver.title}")
+            for bureau_name, bureau_url in bureau_list:
+                print(f"\n  🔍 抓取: {bureau_name}")
+                print(f"     {bureau_url}")
 
-            # ── 點擊「航行警告」選單 ──
-            try:
-                nav_btn = self.wait.until(
-                    EC.element_to_be_clickable(
-                        (By.XPATH, "//span[contains(text(), '航行警告')]")
-                    )
-                )
-                self.driver.execute_script("arguments[0].click();", nav_btn)
-                print("  ✅ 已點擊「航行警告」選單")
-                time.sleep(3)
-            except Exception as e:
-                print(f"  ❌ 找不到「航行警告」按鈕: {e}")
-                print("  🔎 嘗試列出頁面所有 span 文字...")
-                spans = self.driver.find_elements(By.TAG_NAME, 'span')
-                span_texts = [s.text.strip() for s in spans if s.text.strip()][:20]
-                print(f"  📋 前20個 span: {span_texts}")
-                raise
-
-            # ── 取得子局清單 ──
-            bureau_elements = self.driver.find_elements(
-                By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text"
-            )
-            bureaus = [b.text.strip() for b in bureau_elements if b.text.strip()]
-            print(f"  📍 找到 {len(bureaus)} 個海事局: {bureaus}")
-
-            # 若選單抓取失敗，使用備用清單
-            if not bureaus:
-                print("  ⚠️ 選單抓取失敗，改用備用海事局清單")
-                bureaus = self.FALLBACK_BUREAUS
-
-            # ── 逐一爬取 ──
-            for b_name in bureaus:
-                try:
-                    # 每次都重新查找元素，避免 stale element
-                    elem = self.driver.find_element(
-                        By.XPATH,
-                        f"//div[@class='nav_lv2_text' and contains(text(), '{b_name}')]"
-                    )
-                    self.scrape_bureau_warnings(b_name, elem)
-                    time.sleep(1)
-                except Exception as e:
-                    print(f"    ⚠️ 跳過 {b_name}: {e}")
+                soup = self._get_soup(bureau_url)
+                if not soup:
+                    print(f"    ❌ 頁面抓取失敗，跳過")
                     continue
+
+                page_title = soup.title.string.strip() if soup.title else '(無標題)'
+                print(f"    📄 {page_title}")
+
+                items = self._extract_items(soup)
+                print(f"    📋 解析到 {len(items)} 個項目", end="")
+
+                if not items:
+                    print()
+                    # Debug：印出前5個連結
+                    for a in soup.find_all('a', href=True)[:5]:
+                        print(f"    🔗 {a.get('href','')} | {a.get_text(strip=True)[:40]}")
+                    time.sleep(1)
+                    continue
+
+                # 顯示日期範圍
+                dates = [i['publish_time'] for i in items if i['publish_time']]
+                print(f" | 日期: {min(dates)} ~ {max(dates)}" if dates else "")
+
+                self._process_items(items, bureau_name)
+                time.sleep(1)  # 禮貌性延遲
 
         except Exception as e:
             print(f"❌ 中國海事局爬取錯誤: {e}")
             traceback.print_exc()
-        finally:
-            try:
-                self.driver.quit()
-                print("  🔒 WebDriver 已關閉 (中國海事局)")
-            except Exception:
-                pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
         print(f"\n🇨🇳 中國海事局爬取完成:")
