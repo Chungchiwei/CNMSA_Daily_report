@@ -3,7 +3,7 @@
 """
 統一海事警告監控系統 (中國海事局 + 台灣航港局 + UKMTO)
 支援經緯度提取、Teams 通知、Email 報告
-版本: 3.5 - CN_MSA 改為純 requests，移除 Selenium 依賴
+版本: 3.3 - UKMTO CSS Selector 改為 partial match，防止 Next.js hash 變動失效
 """
 
 import platform
@@ -24,7 +24,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from dotenv import load_dotenv
-# ✅ 只保留 UKMTO / TW_MPB 仍需要的 Selenium import
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -58,7 +57,7 @@ if os.name == 'nt':
     sys.stderr = ErrorFilter(sys.stderr)
 
 
-# ==================== 2. 座標提取器 (v3.5 修正版) ====================
+# ==================== 2. 座標提取器 (增強版) ====================
 class CoordinateExtractor:
     def __init__(self):
         self.patterns = [
@@ -101,9 +100,9 @@ class CoordinateExtractor:
         groups = match.groups()
         if len(groups) == 4 and '\\.' in pattern and 'degree' not in pattern:
             try:
-                lat     = float(groups[0])
+                lat = float(groups[0])
                 lat_dir = groups[1].upper()
-                lon     = float(groups[2])
+                lon = float(groups[2])
                 lon_dir = groups[3].upper()
                 if lat_dir in ['S', 's', '南']:
                     lat = -lat
@@ -152,33 +151,21 @@ class CoordinateExtractor:
         if not coord or len(coord) != 2:
             return False
         lat, lon = coord
-        if not (-90 <= lat <= 90):
+        if lat < -90 or lat > 90:
             return False
-        if not (-180 <= lon <= 180):
+        if lon < -180 or lon > 180:
             return False
-        # ✅ 修正：中國沿海 lon 最小約 108°，原本 60° 下限過嚴
-        # 涵蓋範圍：東亞 + 中東 + 非洲東岸（UKMTO 活動區域）
-        if not (-60 <= lat <= 60 and 30 <= lon <= 180):
+        if not (-60 <= lat <= 60 and 60 <= lon <= 180):
             return False
         return True
 
     def extract_from_html(self, html_content):
-        """
-        ✅ 修正：原本 find('div', {'class': 'text', 'id': 'ch_p'}) 是 AND 條件
-        改為依序嘗試 class='text' 或 id='ch_p'
-        """
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
-            content_div = (
-                soup.find('div', class_='text') or
-                soup.find('div', id='ch_p')     or
-                soup.find('div', class_='TRS_Editor') or
-                soup.find('div', class_='content') or
-                soup.find('article')
-            )
+            content_div = soup.find('div', {'class': 'text', 'id': 'ch_p'})
             if content_div:
                 return self.extract_coordinates(content_div.get_text())
-            return self.extract_coordinates(soup.get_text())
+            return self.extract_coordinates(html_content)
         except Exception as e:
             print(f"    ⚠️ HTML 解析失敗: {e}")
             return []
@@ -604,7 +591,7 @@ class GmailRelayNotifier:
         <td bgcolor="#0A1628">
           <table width="100%" cellpadding="24" cellspacing="0"><tr><td>
             <font face="Arial, sans-serif" size="5" color="#FFFFFF"><b>🌊 WHL_Maritech_FRM 海事警告監控</b></font><br><br>
-            <font face="Arial, sans-serif" size="2" color="#8FA3B8">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.2</font>
+            <font face="Arial, sans-serif" size="2" color="#8FA3B8">📅 報告時間：{tpe_now} (TPE) &nbsp;|&nbsp; 系統版本 v3.3</font>
           </td></tr></table>
         </td>
       </tr>"""
@@ -700,7 +687,7 @@ class GmailRelayNotifier:
           <table width="100%" cellpadding="16" cellspacing="0"><tr><td align="center">
             <font face="Arial, sans-serif" size="2" color="#6C757D">
               ⚠️ 此為自動發送的郵件，請勿直接回覆<br><br>
-              航行警告監控系統 v3.2 &nbsp;|&nbsp; Navigation Warning Monitor System
+              航行警告監控系統 v3.3 &nbsp;|&nbsp; Navigation Warning Monitor System
             </font>
           </td></tr></table>
         </td>
@@ -713,7 +700,7 @@ class GmailRelayNotifier:
         return html
 
 
-# ==================== 5. UKMTO 爬蟲 (v3.2 - 不變) ====================
+# ==================== 5. UKMTO 爬蟲 (v3.3 - Partial Class Match) ====================
 class UKMTOScraper:
     URL = "https://www.ukmto.org/recent-incidents"
     MONTH_MAP = {
@@ -721,6 +708,15 @@ class UKMTOScraper:
         "May": 5,     "June": 6,     "July": 7,      "August": 8,
         "September": 9, "October": 10, "November": 11, "December": 12,
     }
+
+    # ✅ v3.3 改動：所有 selector 改為 partial class match，不依賴 Next.js hash
+    # 只保留 class 前綴，hash 部分完全移除
+    SEL_INCIDENT_LIST = "ul[class*='IncidentList_incidentList']"
+    SEL_INCIDENT_ITEM = "ul[class*='IncidentList_incidentList'] > li[class*='IncidentList_incident']"
+    SEL_TITLE_BTN     = "h3[class*='IncidentList_title'] button"
+    SEL_PIN_SPAN      = "span[class*='Pin_pin']"
+    SEL_META_SPAN     = "ul[class*='IncidentList_meta'] li span"
+    SEL_DETAILS_P     = "p[class*='IncidentList_details']"
 
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor, days=30):
         self.db_manager       = db_manager
@@ -740,9 +736,10 @@ class UKMTOScraper:
         self.captured_warnings_history = []
         self._next_data_coords: dict   = {}
 
-        print(f"  🇬🇧 UKMTO 爬蟲設定:")
+        print(f"  🇬🇧 UKMTO 爬蟲設定 (v3.3):")
         print(f"     - 抓取範圍: 最近 {days} 天 (從 {self.cutoff_date.strftime('%Y-%m-%d')} 起)")
         print(f"     - 今日定義: {self.today_start.strftime('%Y-%m-%d')} 00:00 UTC 起")
+        print(f"     - CSS 策略: Partial class match (防 hash 失效)")
 
         print("  🌐 正在啟動 Chrome WebDriver (UKMTO)...")
         self.driver = self._init_driver()
@@ -795,6 +792,57 @@ class UKMTOScraper:
         except Exception as e:
             print(f"  ⚠️  webdriver_manager 失敗: {e}")
         return None
+
+    def _verify_selectors(self):
+        """
+        ✅ v3.3 新增：執行前驗證所有關鍵 selector 是否有效
+        若任何 selector 找不到元素，印出警告方便快速定位
+        """
+        print("\n  🔬 Selector 驗證中...")
+        test_cases = [
+            (self.SEL_INCIDENT_LIST, "事件列表容器"),
+            (self.SEL_INCIDENT_ITEM, "事件項目"),
+            (self.SEL_TITLE_BTN,     "標題按鈕"),
+            (self.SEL_PIN_SPAN,      "Pin 顏色標記"),
+            (self.SEL_META_SPAN,     "日期 span"),
+            (self.SEL_DETAILS_P,     "詳情段落"),
+        ]
+        all_ok = True
+        for selector, name in test_cases:
+            try:
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                status = f"✅ 找到 {len(elements)} 個" if elements else "❌ 找不到任何元素"
+                if not elements:
+                    all_ok = False
+            except Exception as e:
+                status = f"❌ 錯誤: {e}"
+                all_ok = False
+            print(f"     [{name}] {selector[:60]} → {status}")
+
+        if not all_ok:
+            print("\n  ⚠️  部分 Selector 失效！正在印出頁面 class 清單以供診斷...")
+            self._debug_print_classes()
+        else:
+            print("  ✅ 所有 Selector 驗證通過")
+        return all_ok
+
+    def _debug_print_classes(self):
+        """
+        ✅ v3.3 新增：當 selector 失效時，自動印出頁面所有 class 名稱
+        方便快速找到新的 class 前綴
+        """
+        try:
+            soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+            all_classes = set()
+            for tag in soup.find_all(True):
+                for cls in tag.get('class', []):
+                    if 'IncidentList' in cls or 'Pin_pin' in cls or 'incident' in cls.lower():
+                        all_classes.add(cls)
+            print(f"  🔎 頁面中找到的相關 class 名稱:")
+            for cls in sorted(all_classes):
+                print(f"     - {cls}")
+        except Exception as e:
+            print(f"  ⚠️  Debug class 列印失敗: {e}")
 
     def _extract_coords_from_next_data(self) -> dict:
         coord_map = {}
@@ -918,14 +966,19 @@ class UKMTOScraper:
             return None
 
     def scrape(self):
-        print(f"\n🇬🇧 開始爬取 UKMTO 航行警告...")
+        print(f"\n🇬🇧 開始爬取 UKMTO 航行警告 (v3.3)...")
         try:
             self.driver.get(self.URL)
+
+            # ✅ v3.3：等待改用 partial class match selector
             self.wait.until(EC.presence_of_element_located(
-                (By.CSS_SELECTOR, "ul.IncidentList_incidentList__NGsl0")
+                (By.CSS_SELECTOR, self.SEL_INCIDENT_LIST)
             ))
             print("  ✅ 頁面載入完成")
             time.sleep(2)
+
+            # ✅ v3.3：執行 selector 驗證
+            self._verify_selectors()
 
             print("\n  📡 Step 1: 從 __NEXT_DATA__ 提取座標...")
             self._next_data_coords = self._extract_coords_from_next_data()
@@ -940,9 +993,11 @@ class UKMTOScraper:
                 print("  ⚠️  無法預載座標，將改用文字解析 fallback")
 
             print("\n  📋 Step 3: 開始解析事件列表...")
+
+            # ✅ v3.3：改用 partial class match 抓取事件列表
             li_elements = self.driver.find_elements(
                 By.CSS_SELECTOR,
-                "ul.IncidentList_incidentList__NGsl0 > li.IncidentList_incident__HgGtN"
+                self.SEL_INCIDENT_ITEM
             )
             print(f"  共找到 {len(li_elements)} 筆事件，篩選最近 {self.days} 天...")
 
@@ -972,22 +1027,35 @@ class UKMTOScraper:
 
     def _process_incident(self, elem):
         incident_id = elem.get_attribute("id") or ""
+
+        # ✅ v3.3：全部改用 partial class match selector
         try:
-            title = elem.find_element(By.CSS_SELECTOR, "h3.IncidentList_title__cOmOY button").text.strip()
+            title = elem.find_element(
+                By.CSS_SELECTOR, self.SEL_TITLE_BTN
+            ).text.strip()
         except Exception:
             title = "N/A"
+
         try:
-            colour = elem.find_element(By.CSS_SELECTOR, "span.Pin_pin__dpf_F").get_attribute("data-colour") or "N/A"
+            colour = elem.find_element(
+                By.CSS_SELECTOR, self.SEL_PIN_SPAN
+            ).get_attribute("data-colour") or "N/A"
         except Exception:
             colour = "N/A"
+
         try:
-            date_str      = elem.find_element(By.CSS_SELECTOR, "ul.IncidentList_meta__JmhSj li span").text.strip()
+            date_str      = elem.find_element(
+                By.CSS_SELECTOR, self.SEL_META_SPAN
+            ).text.strip()
             incident_date = self._parse_date(date_str)
         except Exception:
             date_str      = "N/A"
             incident_date = None
+
         try:
-            details = elem.find_element(By.CSS_SELECTOR, "p.IncidentList_details__bwUAz").text.strip()
+            details = elem.find_element(
+                By.CSS_SELECTOR, self.SEL_DETAILS_P
+            ).text.strip()
         except Exception:
             details = "N/A"
 
@@ -1336,103 +1404,65 @@ class TWMaritimePortBureauScraper:
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
 
 
-# ==================== 7. 中國海事局爬蟲 (v4.0 - 商船航行安全過濾版) ====================
+# ==================== 7. 中國海事局爬蟲 (v3.3 - 與 v3.2 相同) ====================
 class CNMSANavigationWarningsScraper:
-
-    BASE_URL  = "https://www.msa.gov.cn"
-    INDEX_URL = "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html"
-
-    # ── 局別清單：新增 scope 欄位 ──────────────────────────────────────────
-    #   "ocean"  = 沿海/開放海域，直接影響商船
-    #   "coastal" = 半封閉沿岸，仍有國際商港，保留但可視需求降權
-    #   "inland" = 純內河，跳過
-    HARDCODED_BUREAUS = [
-        ("上海海事局",       "/94df14ce1110415da44e67593e76619f/index.jhtml",  "ocean"),
-        ("天津海事局",       "/bdba5fad6e5d48679f970fcf8efb8636/index.jhtml",  "ocean"),
-        ("辽宁海事局",       "/c8896863b1014c438705536a03eb46ff/index.jhtml",  "ocean"),
-        ("山东海事局",       "/36ea3354c8f84953aba082d6d989c750/index.jhtml",  "ocean"),
-        ("浙江海事局",       "/8e10ea74eb9e4c9690f8f891968add80/index.jhtml",  "ocean"),
-        ("福建海事局",       "/7b08405760384570a0fb44e9204c4b1d/index.jhtml",  "ocean"),
-        ("广东海事局",       "/1e478d409e854918bf12478b8a19f4a8/index.jhtml",  "ocean"),
-        ("广西海事局",       "/86de2fffff2c47f98359fd1f20d6508f/index.jhtml",  "ocean"),
-        ("海南海事局",       "/d3340711057b494b8fa09eedc4c5ead9/index.jhtml",  "ocean"),
-        ("深圳海事局",       "/325fdc0892b44313a63ee5c165be98ec/index.jhtml",  "ocean"),
-        ("连云港海事局",     "/fa4501f3dbe44f70bc726f27132d4e04/index.jhtml",  "ocean"),
-        ("河北海事局",       "/93b73989d22045f9bc3270a6eba35180/index.jhtml",  "coastal"),
-        ("江苏海事局",       "/b5b0f3c7630d4967b1e6b06208575d15/index.jhtml",  "coastal"),
-        ("江苏省地方海事局", "/d14ed012960b4064971270459a4a0d4d/index.jhtml",  "coastal"),
-        # ↓ 純內河，不影響商船海上航行，直接跳過
-        ("长江海事局",       "/9340423406cc4507b2fb8af2492d2a3d/index.jhtml",  "inland"),
-        ("江西省地方海事局", "/html/cnmsa/hxaq/aqxx/hxjg/jxsdfhsju/index.html", "inland"),
+    FALLBACK_BUREAUS = [
+        "天津海事局", "河北海事局", "辽宁海事局", "山东海事局",
+        "上海海事局", "江苏海事局", "浙江海事局", "福建海事局",
+        "广东海事局", "广西海事局", "海南海事局", "长江海事局",
+        "黑龙江海事局", "连云港海事局", "深圳海事局",
     ]
 
-    # 需要爬取的 scope，可在初始化時覆寫
-    ACTIVE_SCOPES = {"ocean", "coastal"}
-
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor,
-                 headless=True, days=7, active_scopes=None):
+                 headless=True, days=3):
         self.db_manager      = db_manager
         self.keyword_manager = keyword_manager
         self.keywords        = keyword_manager.get_keywords()
         self.teams_notifier  = teams_notifier
         self.coord_extractor = coord_extractor
 
+        print("🇨🇳 初始化中國海事局爬蟲 v3.3...")
+
+        options = webdriver.ChromeOptions()
+        if headless:
+            options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument(
+            'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+        options.add_experimental_option(
+            'prefs', {'profile.managed_default_content_settings.images': 2}
+        )
+        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        options.add_experimental_option('useAutomationExtension', False)
+
+        try:
+            service = Service(ChromeDriverManager().install())
+            if platform.system() == 'Windows':
+                service.creation_flags = subprocess.CREATE_NO_WINDOW
+            self.driver = webdriver.Chrome(service=service, options=options)
+            self.driver.set_page_load_timeout(120)
+            self.wait = WebDriverWait(self.driver, 20)
+            print("  ✅ WebDriver 啟動成功")
+        except Exception as e:
+            print(f"  ❌ WebDriver 啟動失敗: {e}")
+            raise
+
         self.days        = days
         self.cutoff_date = datetime.now() - timedelta(days=days)
         self.today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # 允許外部傳入覆寫，預設只爬 ocean + coastal
-        self.active_scopes = set(active_scopes) if active_scopes else self.ACTIVE_SCOPES
 
         self.new_warnings_today        = []
         self.new_warnings_history      = []
         self.captured_warnings_today   = []
         self.captured_warnings_history = []
 
-        self.session = self._build_session()
-
-        print("🇨🇳 初始化中國海事局爬蟲 v4.0 (商船航行安全過濾版)...")
-        print(f"  🌐 {self.INDEX_URL}")
-        print(f"  📅 最近 {days} 天 | 截止: {self.cutoff_date.strftime('%Y-%m-%d')} | 今日: {self.today_start.strftime('%Y-%m-%d')}")
-        print(f"  🔍 啟用局別範圍: {self.active_scopes}")
-
-    # ── Session 建立（不變）────────────────────────────────────────────────
-    def _build_session(self):
-        s = requests.Session()
-        s.headers.update({
-            'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection':      'keep-alive',
-            'Referer':         'https://www.msa.gov.cn/',
-        })
-        s.verify = False
-        return s
-
-    # ── 基礎工具（不變）───────────────────────────────────────────────────
-    def _get_soup(self, url, timeout=20):
-        for attempt in range(3):
-            try:
-                resp = self.session.get(url, timeout=timeout)
-                if resp.status_code == 200:
-                    resp.encoding = resp.apparent_encoding or 'utf-8'
-                    soup  = BeautifulSoup(resp.text, 'html.parser')
-                    title = soup.title.string if soup.title else ''
-                    if any(k in title.upper() for k in ['ACCESS DENIED', 'FORBIDDEN']):
-                        print(f"    ⛔ 被封鎖 (attempt {attempt+1})")
-                        time.sleep(3)
-                        continue
-                    return soup
-                print(f"    ⚠️ HTTP {resp.status_code} (attempt {attempt+1}): {url[:60]}")
-                time.sleep(2)
-            except requests.exceptions.Timeout:
-                print(f"    ⚠️ Timeout (attempt {attempt+1}): {url[:60]}")
-                time.sleep(3)
-            except Exception as e:
-                print(f"    ⚠️ 請求失敗 (attempt {attempt+1}): {type(e).__name__}")
-                time.sleep(2)
-        return None
+        print(f"  📅 抓取範圍: 最近 {days} 天 | 截止: {self.cutoff_date.strftime('%Y-%m-%d')} | 今日: {self.today_start.strftime('%Y-%m-%d')}")
 
     def check_keywords(self, text):
         if not text:
@@ -1456,265 +1486,308 @@ class CNMSANavigationWarningsScraper:
                 pass
         return None
 
-    # ── 局別清單建立：動態抓取 + 硬編碼備援，統一套用 scope 過濾 ──────────
-    def _fetch_bureau_list(self):
-        """
-        回傳 list of (name, url, scope)
-        動態抓取的局別無法判斷 scope，預設標記為 'ocean' 以保守保留；
-        若與硬編碼清單名稱吻合，則沿用硬編碼的 scope。
-        """
-        print("  📡 動態抓取各局連結...")
-        soup = self._get_soup(self.INDEX_URL)
-        if not soup:
-            print("  ⚠️ 首頁抓取失敗，使用硬編碼清單")
-            return self._build_hardcoded_list()
+    def _wait_for_list_content(self, timeout=15):
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "right_main"))
+            )
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".right_main a"))
+            )
+            time.sleep(1)
+            return True
+        except Exception as e:
+            print(f"    ⚠️ 等待列表內容逾時: {e}")
+            return False
 
-        # 建立硬編碼 scope 查找表（以局名為 key）
-        scope_map = {name: scope for name, _, scope in self.HARDCODED_BUREAUS}
-
-        bureaus = []
-        for li in soup.find_all('li', class_='nav_lv2_list'):
-            a_tag    = li.find('a', href=True)
-            name_div = li.find('div', class_='nav_lv2_text')
-            if not a_tag or not name_div:
-                continue
-            name = name_div.get_text(strip=True)
-            href = a_tag.get('href', '')
-            if not name or not href:
-                continue
-            full_url = href if href.startswith('http') else f"{self.BASE_URL}{href}"
-            # 查找 scope，未知局別預設 'ocean'（保守保留）
-            scope = scope_map.get(name, 'ocean')
-            bureaus.append((name, full_url, scope))
-
-        if bureaus:
-            print(f"  ✅ 動態抓取成功，共 {len(bureaus)} 個局")
-            return bureaus
-
-        print("  ⚠️ 動態解析到 0 個局，使用硬編碼清單")
-        return self._build_hardcoded_list()
-
-    def _build_hardcoded_list(self):
-        result = [
-            (name, path if path.startswith('http') else f"{self.BASE_URL}{path}", scope)
-            for name, path, scope in self.HARDCODED_BUREAUS
-        ]
-        print(f"  📋 硬編碼清單：{len(result)} 個局")
-        return result
-
-    # ── 項目解析（不變）───────────────────────────────────────────────────
-    def _extract_items(self, soup):
+    def _parse_items_from_bs4(self):
         items = []
-        seen  = set()
+        try:
+            soup       = BeautifulSoup(self.driver.page_source, 'html.parser')
+            right_main = soup.find(class_='right_main')
 
-        # 方法 A：table > tr > td
-        for tr in soup.find_all('tr'):
-            tds   = tr.find_all('td')
-            if len(tds) < 2:
-                continue
-            a_tag = tds[0].find('a', href=True)
-            if not a_tag:
-                continue
-            title = (a_tag.get('title') or a_tag.get_text(strip=True) or '').strip()
-            title = re.sub(r'\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$', '', title).strip()
-            if not title or len(title) < 4:
-                continue
-            href = a_tag.get('href', '')
-            if not href or href.startswith(('javascript:', '#')):
-                continue
-            if href.startswith('/'):
-                href = f"{self.BASE_URL}{href}"
-            elif not href.startswith('http'):
-                href = f"{self.BASE_URL}/{href}"
-            publish_time = tds[1].get_text(strip=True)
-            if href in seen:
-                continue
-            seen.add(href)
-            items.append({'title': title, 'link': href, 'publish_time': publish_time})
+            if not right_main:
+                print("    ❌ BS4 找不到 .right_main")
+                body_text = soup.get_text()[:500].replace('\n', ' ')
+                print(f"    🔎 頁面內容預覽: {body_text}")
+                return items
 
-        if items:
-            return items
+            all_links = right_main.find_all('a')
+            print(f"    🔎 BS4 在 .right_main 找到 {len(all_links)} 個 <a> 連結")
 
-        # 方法 B：ul > li（備用）
-        for li in soup.find_all('li'):
-            a_tag = li.find('a', href=True)
-            if not a_tag:
-                continue
-            title = (a_tag.get('title') or a_tag.get_text(strip=True) or '').strip()
-            title = re.sub(r'\s*\d{4}[-/]\d{2}[-/]\d{2}\s*$', '', title).strip()
-            if not title or len(title) < 4:
-                continue
-            href = a_tag.get('href', '')
-            if not href or href.startswith(('javascript:', '#')):
-                continue
-            if href.startswith('/'):
-                href = f"{self.BASE_URL}{href}"
-            elif not href.startswith('http'):
-                href = f"{self.BASE_URL}/{href}"
-            publish_time = ''
-            for tag in li.find_all(['span', 'em', 'i', 'div']):
-                txt = tag.get_text(strip=True)
-                if re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', txt):
-                    publish_time = txt[:10]
-                    break
-            if not publish_time:
-                m = re.search(r'(\d{4}-\d{2}-\d{2})', li.get_text())
-                if m:
-                    publish_time = m.group(1)
-            if href in seen:
-                continue
-            seen.add(href)
-            items.append({'title': title, 'link': href, 'publish_time': publish_time})
+            if not all_links:
+                print(f"    🔎 right_main HTML 預覽: {str(right_main)[:300]}")
+                return items
+
+            for a_tag in all_links:
+                try:
+                    title = (
+                        a_tag.get('title') or
+                        a_tag.get_text(strip=True) or
+                        ''
+                    )
+                    title = re.sub(r'\s*\d{4}-\d{2}-\d{2}\s*$', '', title).strip()
+
+                    if not title:
+                        continue
+
+                    href = a_tag.get('href', '')
+                    if href.startswith('/'):
+                        href = f"https://www.msa.gov.cn{href}"
+                    elif not href.startswith('http'):
+                        href = ''
+
+                    publish_time = ''
+                    time_span = a_tag.find(class_='time')
+                    if time_span:
+                        publish_time = time_span.get_text(strip=True)
+                    else:
+                        parent = a_tag.parent
+                        for _ in range(3):
+                            if parent is None:
+                                break
+                            spans = parent.find_all(['span', 'em', 'i'])
+                            for sp in spans:
+                                sp_text = sp.get_text(strip=True)
+                                if re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', sp_text):
+                                    publish_time = sp_text
+                                    break
+                            if publish_time:
+                                break
+                            parent = parent.parent
+
+                    if not publish_time:
+                        full_text = a_tag.get_text()
+                        m = re.search(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', full_text)
+                        if m:
+                            publish_time = m.group()
+
+                    items.append({
+                        'title':        title,
+                        'link':         href,
+                        'publish_time': publish_time,
+                    })
+
+                except Exception as e:
+                    print(f"    ⚠️ 解析單筆連結失敗: {e}")
+                    continue
+
+        except Exception as e:
+            print(f"    ❌ BS4 解析失敗: {e}")
+            traceback.print_exc()
 
         return items
 
     def _fetch_detail_coords(self, link):
-        """用 requests 抓詳情頁，提取座標"""
+        coordinates = []
         if not link or link.startswith('javascript'):
-            return []
-        soup = self._get_soup(link, timeout=15)
-        if not soup:
-            return []
+            return coordinates
+
         try:
-            if hasattr(self.coord_extractor, 'extract_from_html'):
-                coords = self.coord_extractor.extract_from_html(str(soup))
-            else:
-                content = (
-                    soup.find('div', class_='text')       or
-                    soup.find('div', id='ch_p')            or
-                    soup.find('div', class_='TRS_Editor')  or
-                    soup.find('div', class_='content')     or
-                    soup.find('article')                   or
-                    soup
-                )
-                coords = self.coord_extractor.extract_coordinates(content.get_text())
+            self.driver.execute_script("window.open('');")
+            self.driver.switch_to.window(self.driver.window_handles[-1])
+            self.driver.set_page_load_timeout(12)
+            try:
+                self.driver.get(link)
+                time.sleep(1.5)
+                page_coords = self.coord_extractor.extract_from_html(self.driver.page_source)
+                coordinates.extend(page_coords)
+                if page_coords:
+                    print(f"      📍 詳情頁取得 {len(page_coords)} 個座標")
+            except Exception as e:
+                print(f"      ⚠️ 詳情頁載入失敗: {type(e).__name__}")
         except Exception as e:
-            print(f"      ⚠️ 座標提取失敗: {type(e).__name__}: {e}")
-            coords = []
-        if coords:
-            print(f"      📍 詳情頁取得 {len(coords)} 個座標")
-        return coords
+            print(f"      ⚠️ 開新分頁失敗: {e}")
+        finally:
+            try:
+                if len(self.driver.window_handles) > 1:
+                    self.driver.close()
+                    self.driver.switch_to.window(self.driver.window_handles[0])
+                    self.driver.set_page_load_timeout(120)
+            except Exception:
+                pass
 
-    # ── 項目處理（不變）───────────────────────────────────────────────────
-    def _process_items(self, items, bureau_name):
-        matched_count = 0
-        skipped_date  = 0
-        skipped_kw    = 0
+        return coordinates
 
-        for item in items:
-            title        = item['title'].strip()
-            link         = item['link']
-            publish_time = item['publish_time'].strip()
+    def scrape_bureau_warnings(self, bureau_name, bureau_element):
+        print(f"\n  🔍 抓取: {bureau_name}")
+        max_retries = 3
 
-            if not title:
-                continue
-            if not publish_time:
-                skipped_date += 1
-                continue
-            p_date = self.parse_date(publish_time)
-            if not p_date or p_date < self.cutoff_date:
-                skipped_date += 1
-                continue
+        for retry in range(max_retries):
+            try:
+                if retry > 0:
+                    print(f"    🔄 重試第 {retry} 次...")
+                    time.sleep(3)
+                    try:
+                        bureau_element = self.driver.find_element(
+                            By.XPATH,
+                            f"//div[@class='nav_lv2_text' and contains(text(), '{bureau_name}')]"
+                        )
+                    except Exception:
+                        print(f"    ⚠️ 無法重新獲取元素，跳過: {bureau_name}")
+                        return
 
-            is_today   = p_date >= self.today_start
-            time_label = "🆕 今日" if is_today else "📚 歷史"
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView(true); arguments[0].click();",
+                    bureau_element
+                )
+                print(f"    ✅ 已點擊 {bureau_name}")
+                time.sleep(2)
 
-            matched = self.check_keywords(title)
-            if not matched:
-                skipped_kw += 1
-                continue
+                if not self._wait_for_list_content(timeout=15):
+                    print(f"    ⚠️ {bureau_name} 列表未能載入，跳過")
+                    break
 
-            matched_count += 1
-            print(f"      {time_label} ✅ [{publish_time}] {title[:55]} | {matched[:3]}")
+                raw_items = self._parse_items_from_bs4()
+                print(f"    📋 解析到 {len(raw_items)} 個項目（含未命中關鍵字的）")
 
-            coordinates = self.coord_extractor.extract_coordinates(title)
-            for dc in self._fetch_detail_coords(link):
-                if dc not in coordinates:
-                    coordinates.append(dc)
+                if not raw_items:
+                    print(f"    ⚠️ {bureau_name} 無項目，可能頁面結構已變更")
+                    break
 
-            db_data = (
-                bureau_name, title, link, publish_time,
-                ', '.join(matched),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                coordinates
-            )
-            is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
+                matched_count = 0
+                skipped_date  = 0
+                skipped_kw    = 0
 
-            if is_new and w_id:
-                warning_data = {
-                    'id':           w_id,
-                    'bureau':       bureau_name,
-                    'title':        title,
-                    'link':         link,
-                    'time':         publish_time,
-                    'keywords':     matched,
-                    'source':       'CN_MSA',
-                    'coordinates':  coordinates,
-                    'coord_source': 'text',
-                }
-                if is_today:
-                    self.new_warnings_today.append(w_id)
-                    self.captured_warnings_today.append(warning_data)
-                    print(f"      💾 [今日] DB ID: {w_id}")
-                else:
-                    self.new_warnings_history.append(w_id)
-                    self.captured_warnings_history.append(warning_data)
-                    print(f"      💾 [歷史] DB ID: {w_id}")
-            else:
-                print(f"      ⏭️  已存在")
+                for item in raw_items:
+                    title        = item['title']
+                    link         = item['link']
+                    publish_time = item['publish_time']
 
-        print(
-            f"    📊 {bureau_name} | "
-            f"命中={matched_count} | 日期過濾={skipped_date} | 關鍵字未命中={skipped_kw}"
-        )
+                    if not publish_time:
+                        skipped_date += 1
+                        continue
 
-    # ── 主爬取流程：新增 scope 過濾 ───────────────────────────────────────
+                    p_date = self.parse_date(publish_time)
+                    if not p_date:
+                        skipped_date += 1
+                        continue
+
+                    if p_date < self.cutoff_date:
+                        skipped_date += 1
+                        continue
+
+                    is_today   = p_date >= self.today_start
+                    time_label = "🆕 今日" if is_today else "📚 歷史"
+
+                    matched = self.check_keywords(title)
+                    if not matched:
+                        skipped_kw += 1
+                        print(f"      ⬜ 未命中 [{publish_time}]: {title[:50]}")
+                        continue
+
+                    matched_count += 1
+                    print(f"      {time_label} ✅ [{publish_time}] {title[:50]} | 關鍵字: {matched}")
+
+                    coordinates = self.coord_extractor.extract_coordinates(title)
+                    detail_coords = self._fetch_detail_coords(link)
+                    for dc in detail_coords:
+                        if dc not in coordinates:
+                            coordinates.append(dc)
+
+                    db_data = (
+                        bureau_name, title, link, publish_time,
+                        ', '.join(matched),
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        coordinates
+                    )
+                    is_new, w_id = self.db_manager.save_warning(db_data, source_type="CN_MSA")
+
+                    if is_new and w_id:
+                        warning_data = {
+                            'id':           w_id,
+                            'bureau':       bureau_name,
+                            'title':        title,
+                            'link':         link,
+                            'time':         publish_time,
+                            'keywords':     matched,
+                            'source':       'CN_MSA',
+                            'coordinates':  coordinates,
+                            'coord_source': 'text',
+                        }
+                        if is_today:
+                            self.new_warnings_today.append(w_id)
+                            self.captured_warnings_today.append(warning_data)
+                            print(f"      💾 [今日] 已存入 DB (ID: {w_id})")
+                        else:
+                            self.new_warnings_history.append(w_id)
+                            self.captured_warnings_history.append(warning_data)
+                            print(f"      💾 [歷史] 已存入 DB (ID: {w_id})")
+                    else:
+                        print(f"      ⏭️  已存在，跳過")
+
+                print(
+                    f"    📊 {bureau_name} 完成 | "
+                    f"命中={matched_count} | "
+                    f"日期過濾={skipped_date} | "
+                    f"關鍵字未命中={skipped_kw}"
+                )
+                break
+
+            except Exception as e:
+                print(f"    ⚠️ 抓取 {bureau_name} 錯誤 (嘗試 {retry+1}/{max_retries}): {e}")
+                if retry == max_retries - 1:
+                    print(f"    ❌ {bureau_name} 已達最大重試次數，放棄")
+                    traceback.print_exc()
+
     def scrape_all_bureaus(self):
-        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v4.0)...")
-        print(f"  🌐 {self.INDEX_URL}")
+        print(f"\n🇨🇳 開始爬取中國海事局航行警告 (v3.3)...")
+        print(f"  🌐 目標: https://www.msa.gov.cn/page/outter/weather.jsp")
+
         try:
-            bureau_list = self._fetch_bureau_list()
+            self.driver.get('https://www.msa.gov.cn/page/outter/weather.jsp')
+            time.sleep(5)
+            print("  ✅ 首頁載入完成")
+            print(f"  📄 頁面標題: {self.driver.title}")
 
-            # ── scope 過濾：inland 直接跳過，不發任何 HTTP 請求 ──
-            active_bureaus  = [(n, u, s) for n, u, s in bureau_list if s in self.active_scopes]
-            skipped_bureaus = [(n, s)    for n, _, s in bureau_list if s not in self.active_scopes]
+            try:
+                nav_btn = self.wait.until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, "//span[contains(text(), '航行警告')]")
+                    )
+                )
+                self.driver.execute_script("arguments[0].click();", nav_btn)
+                print("  ✅ 已點擊「航行警告」選單")
+                time.sleep(3)
+            except Exception as e:
+                print(f"  ❌ 找不到「航行警告」按鈕: {e}")
+                print("  🔎 嘗試列出頁面所有 span 文字...")
+                spans = self.driver.find_elements(By.TAG_NAME, 'span')
+                span_texts = [s.text.strip() for s in spans if s.text.strip()][:20]
+                print(f"  📋 前20個 span: {span_texts}")
+                raise
 
-            if skipped_bureaus:
-                print(f"\n  ⏭️  跳過 {len(skipped_bureaus)} 個內河/非商船局:")
-                for name, scope in skipped_bureaus:
-                    print(f"     [{scope}] {name}")
+            bureau_elements = self.driver.find_elements(
+                By.CSS_SELECTOR, ".nav_lv2_list .nav_lv2_text"
+            )
+            bureaus = [b.text.strip() for b in bureau_elements if b.text.strip()]
+            print(f"  📍 找到 {len(bureaus)} 個海事局: {bureaus}")
 
-            print(f"\n  📍 共 {len(active_bureaus)} 個局待爬取")
+            if not bureaus:
+                print("  ⚠️ 選單抓取失敗，改用備用海事局清單")
+                bureaus = self.FALLBACK_BUREAUS
 
-            for bureau_name, bureau_url, scope in active_bureaus:
-                scope_tag = "🌊" if scope == "ocean" else "⚓"
-                print(f"\n  🔍 {scope_tag} {bureau_name}  [{scope}]")
-                print(f"     {bureau_url}")
-
-                soup = self._get_soup(bureau_url)
-                if not soup:
-                    print(f"    ❌ 頁面抓取失敗，跳過")
-                    continue
-
-                items = self._extract_items(soup)
-                print(f"    📋 解析到 {len(items)} 個項目", end="")
-
-                if not items:
-                    print()
-                    for a in soup.find_all('a', href=True)[:5]:
-                        print(f"    🔗 {a.get('href','')} | {a.get_text(strip=True)[:40]}")
+            for b_name in bureaus:
+                try:
+                    elem = self.driver.find_element(
+                        By.XPATH,
+                        f"//div[@class='nav_lv2_text' and contains(text(), '{b_name}')]"
+                    )
+                    self.scrape_bureau_warnings(b_name, elem)
                     time.sleep(1)
+                except Exception as e:
+                    print(f"    ⚠️ 跳過 {b_name}: {e}")
                     continue
-
-                dates = [i['publish_time'] for i in items if i['publish_time']]
-                print(f" | 日期: {min(dates)} ~ {max(dates)}" if dates else "")
-
-                self._process_items(items, bureau_name)
-                time.sleep(1)
 
         except Exception as e:
             print(f"❌ 中國海事局爬取錯誤: {e}")
             traceback.print_exc()
+        finally:
+            try:
+                self.driver.quit()
+                print("  🔒 WebDriver 已關閉 (中國海事局)")
+            except Exception:
+                pass
 
         total_new = len(self.new_warnings_today) + len(self.new_warnings_history)
         print(f"\n🇨🇳 中國海事局爬取完成:")
@@ -1722,7 +1795,6 @@ class CNMSANavigationWarningsScraper:
         print(f"   📚 歷史資料: {len(self.new_warnings_history)} 筆")
         print(f"   📊 總計新增: {total_new} 筆")
         return {'today': self.new_warnings_today, 'history': self.new_warnings_history}
-
 
 
 # ==================== 8. 環境變數讀取 ====================
@@ -1748,11 +1820,11 @@ ENABLE_TEAMS_NOTIFICATIONS = os.getenv("ENABLE_TEAMS_NOTIFICATIONS", "true").low
 ENABLE_CN_MSA              = os.getenv("ENABLE_CN_MSA",  "true").lower() == "true"
 ENABLE_TW_MPB              = os.getenv("ENABLE_TW_MPB",  "true").lower() == "true"
 ENABLE_UKMTO               = os.getenv("ENABLE_UKMTO",   "true").lower() == "true"
-SCRAPE_DAYS                = int(os.getenv("SCRAPE_DAYS",       "7"))   # v3.2: 預設改為 7 天
+SCRAPE_DAYS                = int(os.getenv("SCRAPE_DAYS",       "7"))
 UKMTO_SCRAPE_DAYS          = int(os.getenv("UKMTO_SCRAPE_DAYS", "30"))
 
 print("\n" + "=" * 70)
-print("⚙️  系統設定檢查 v3.2")
+print("⚙️  系統設定檢查 v3.3")
 print("=" * 70)
 print(f"📧 Email 通知: {'✅ 啟用' if ENABLE_EMAIL_NOTIFICATIONS and MAIL_USER else '❌ 停用'}")
 print(f"📢 Teams 通知: {'✅ 啟用' if ENABLE_TEAMS_NOTIFICATIONS and TEAMS_WEBHOOK else '❌ 停用'}")
@@ -1771,7 +1843,7 @@ print("=" * 70 + "\n")
 if __name__ == "__main__":
     try:
         print("\n" + "=" * 70)
-        print("🌊 海事警告監控系統啟動 v3.2")
+        print("🌊 海事警告監控系統啟動 v3.3")
         print("=" * 70)
 
         print("\n📦 初始化資料庫...")
@@ -1948,7 +2020,7 @@ if __name__ == "__main__":
         db_manager.print_statistics()
 
         print("\n" + "=" * 70)
-        print("🎉 系統執行完成 v3.2")
+        print("🎉 系統執行完成 v3.3")
         print("=" * 70)
 
     except KeyboardInterrupt:
