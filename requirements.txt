@@ -1,9 +1,12 @@
 # ==================== Web Scraping ====================
+# selenium 僅作為中央入口（JS 動態選單）與 UKMTO 的備援方案；
+# 地方海事局來源優先使用 requests + BeautifulSoup（cn_sources/provincial.py）
 selenium>=4.15.0
 webdriver-manager>=4.0.0
 requests>=2.31.0
 urllib3>=2.0.0
 beautifulsoup4>=4.12.0
+lxml>=5.0.0
 
 # ==================== Data Processing ====================
 pandas>=2.0.0
@@ -14,3 +17,11 @@ python-dotenv>=1.0.0
 
 # ==================== Security & SSL ====================
 cryptography>=41.0.0
+
+# ==================== 選配：geofence_and_risk_module.py 的地理圍欄功能 ====================
+# 若不需要船位地理圍欄比對（目前主流程未使用，僅風險評分服務使用規則式評分），
+# 可不安裝；geofence_and_risk_module.py 已對缺少 shapely 做防呆處理。
+shapely>=2.0.0
+
+# ==================== 測試 ====================
+pytest>=8.0.0
