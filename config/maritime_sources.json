@@ -1,0 +1,216 @@
+{
+  "_readme": "中國海事局多來源設定。每個來源皆可獨立啟用/停用，不需修改主程式。needs_verification=true 表示尚未在可連線至中國官方網站的環境中實際驗證過 list_url / selectors，正式上線前請在公司網路執行 --source cn --save-debug 並依 debug 輸出調整 selectors。selectors 為候選清單，程式會依序嘗試，全部失敗才視為 PARSE_ERROR。",
+  "sources": [
+    {
+      "source_id": "cn_central",
+      "source_name": "中國海事局（中央入口）",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "中華人民共和國海事局",
+      "enabled": true,
+      "adapter": "central_selenium",
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/page/outter/weather.jsp",
+      "alt_list_urls": [
+        "https://www.msa.gov.cn/page/channelArticles.do?channelids=9C219298-B27F-460E-995A-99401B3FF6AF",
+        "https://www.msa.gov.cn/html/hxaq/aqxx/index.html"
+      ],
+      "needs_verification": false,
+      "notes": "既有邏輯：Selenium 點擊「航行警告」→ 依海事局選單逐一點擊列表。已加入多組 selector 候選與逐局失敗不中止機制。",
+      "selectors": {
+        "list_container": [".right_main", "#right_main", ".conMain", ".list_1", "div.list"],
+        "bureau_menu": [".nav_lv2_list .nav_lv2_text", ".nav_lv2_text", ".leftMenu li a"],
+        "nav_trigger_text": ["航行警告", "航行通警告", "航行通告"]
+      }
+    },
+    {
+      "source_id": "cn_zhejiang",
+      "source_name": "浙江海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "浙江海事局",
+      "enabled": true,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.zj.msa.gov.cn",
+      "list_url": "https://www.zj.msa.gov.cn/",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "首頁網址已透過搜尋確認存在，但航行警告子欄目路徑與 HTML 結構尚未在可連線環境驗證，需人工確認 list_url 與 selectors。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_jiangsu",
+      "source_name": "江蘇海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "江蘇海事局",
+      "enabled": true,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.js.msa.gov.cn",
+      "list_url": "https://js.msa.gov.cn/col/col75/index.html",
+      "alt_list_urls": ["https://www.js.msa.gov.cn/"],
+      "needs_verification": true,
+      "notes": "list_url 為搜尋結果中的「航行通警告」欄目頁，結構尚未驗證。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_shanghai",
+      "source_name": "上海海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "上海海事局",
+      "enabled": true,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.sh.msa.gov.cn",
+      "list_url": "https://www.sh.msa.gov.cn/hxtjgsj/index.jhtml",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "上海海事局有獨立「航行通警告數據」頁面，結構尚未驗證。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_fujian",
+      "source_name": "福建海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "福建海事局",
+      "enabled": false,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.fj.msa.gov.cn",
+      "list_url": "https://www.fj.msa.gov.cn/",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "網域為推測（沿用 msa.gov.cn 省級子網域命名慣例：fj = 福建），尚未實際確認可連線，預設停用，待驗證後啟用。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_guangdong",
+      "source_name": "廣東海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "廣東海事局",
+      "enabled": false,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.gd.msa.gov.cn",
+      "list_url": "https://www.gd.msa.gov.cn/",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "網域為推測命名慣例，尚未實際確認，預設停用。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_shandong",
+      "source_name": "山東海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "山東海事局",
+      "enabled": false,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.sd.msa.gov.cn",
+      "list_url": "https://www.sd.msa.gov.cn/",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "網域為推測命名慣例，尚未實際確認，預設停用。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_liaoning",
+      "source_name": "遼寧海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "遼寧海事局",
+      "enabled": false,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.ln.msa.gov.cn",
+      "list_url": "https://www.ln.msa.gov.cn/",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "網域為推測命名慣例，尚未實際確認，預設停用。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_hainan",
+      "source_name": "海南海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "海南海事局",
+      "enabled": true,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.hn.msa.gov.cn",
+      "list_url": "https://www.hn.msa.gov.cn/hsfw_1_1/index.jhtml",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "海南海事局有獨立「航行警告」欄目頁（搜尋結果確認存在），結構尚未驗證。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    },
+    {
+      "source_id": "cn_shenzhen",
+      "source_name": "深圳海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "深圳海事局",
+      "enabled": false,
+      "adapter": "provincial_requests",
+      "base_url": "https://www.szmsa.gov.cn",
+      "list_url": "https://www.szmsa.gov.cn/",
+      "alt_list_urls": [],
+      "needs_verification": true,
+      "notes": "深圳海事局網域命名慣例與其他省級子網域不同（szmsa.gov.cn），尚未實際確認，預設停用。",
+      "selectors": {
+        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
+        "item": ["li a", "tr td a", ".list_1 li a"],
+        "date": [".time", "span.date", "td.date"],
+        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
+        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+      }
+    }
+  ]
+}
