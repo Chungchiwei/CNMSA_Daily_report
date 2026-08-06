@@ -1,0 +1,248 @@
+{
+  "type": "message",
+  "attachments": [
+    {
+      "contentType": "application/vnd.microsoft.card.adaptive",
+      "contentUrl": null,
+      "content": {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.4",
+        "body": [
+          {
+            "type": "TextBlock",
+            "text": "🇨🇳 中國海事局｜今日新增（5 筆）",
+            "wrap": true,
+            "weight": "Bolder",
+            "size": "Large",
+            "color": "Attention"
+          },
+          {
+            "type": "TextBlock",
+            "text": "共 5 筆警告",
+            "wrap": true,
+            "size": "Medium",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "🔴 **[CRITICAL]** 1. 浙航警0088/26 关于在东海某海域进行实弹射击的通知",
+            "wrap": true,
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Attention",
+            "spacing": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "來源：浙江海事局 ｜ 發布：2026-08-06 09:15 ｜ 狀態：生效中",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "有效期間：2026-08-10 ~ 2026-08-15｜影響海域：浙江舟山外海（東海）",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "浙江海事局公告東海海域將於8月10日至8月15日進行實彈射擊操演，禁止一切船舶駛入相關水域。",
+            "wrap": true,
+            "size": "Small"
+          },
+          {
+            "type": "TextBlock",
+            "text": "建議行動：立即評估航線是否需繞航，通知船長與航運調度，密切追蹤公告更新。",
+            "wrap": true,
+            "size": "Small",
+            "weight": "Bolder",
+            "color": "Good"
+          },
+          {
+            "type": "TextBlock",
+            "text": "🟠 **[HIGH]** 2. 闽航警0045/26 关于福建沿海禁航区的通知",
+            "wrap": true,
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Attention",
+            "spacing": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "來源：福建海事局 ｜ 發布：2026-08-06 08:30 ｜ 狀態：生效中",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "有效期間：2026-08-06 ~ 2026-08-12｜影響海域：福建廈門外海",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "福建沿海劃設臨時禁航區，禁止船舶進入。",
+            "wrap": true,
+            "size": "Small"
+          },
+          {
+            "type": "TextBlock",
+            "text": "建議行動：評估替代航線並提高警戒。",
+            "wrap": true,
+            "size": "Small",
+            "weight": "Bolder",
+            "color": "Good"
+          },
+          {
+            "type": "TextBlock",
+            "text": "🟡 **[MEDIUM]** 3. <img src=x onerror=alert\\(1\\)>異常測試標題\\[點我\\]\\(javascript:alert\\(2\\)\\)",
+            "wrap": true,
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Warning",
+            "spacing": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "來源：測試海事局 ｜ 發布：2026-08-06 05:00 ｜ 狀態：生效中",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "有效期間：未提供明確有效期間｜影響海域：測試海域",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施臨時管制，本海域自即日起實施…",
+            "wrap": true,
+            "size": "Small"
+          },
+          {
+            "type": "TextBlock",
+            "text": "建議行動：此為安全測試資料，非真實公告。",
+            "wrap": true,
+            "size": "Small",
+            "weight": "Bolder",
+            "color": "Good"
+          },
+          {
+            "type": "TextBlock",
+            "text": "🟡 **[MEDIUM]** 4. 沪航警0012/26 关于水下作业的通知",
+            "wrap": true,
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Warning",
+            "spacing": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "來源：上海海事局 ｜ 發布：2026-08-06 07:00 ｜ 狀態：生效中",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "有效期間：未提供明確有效期間｜影響海域：上海港外錨地",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "上海港附近水域進行水下作業，作業期間請船舶減速慢行並保持安全距離。",
+            "wrap": true,
+            "size": "Small"
+          },
+          {
+            "type": "TextBlock",
+            "text": "建議行動：通過該海域時減速並保持瞭望。",
+            "wrap": true,
+            "size": "Small",
+            "weight": "Bolder",
+            "color": "Good"
+          },
+          {
+            "type": "TextBlock",
+            "text": "🔵 **[LOW]** 5. 南部航務中心 一般航行安全提醒",
+            "wrap": true,
+            "weight": "Bolder",
+            "size": "Medium",
+            "color": "Accent",
+            "spacing": "Medium"
+          },
+          {
+            "type": "TextBlock",
+            "text": "來源：南部航務中心 ｜ 發布：2026-08-06 06:00 ｜ 狀態：生效中",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "有效期間：未提供明確有效期間｜影響海域：台灣海峽南部",
+            "wrap": true,
+            "size": "Small",
+            "isSubtle": true
+          },
+          {
+            "type": "TextBlock",
+            "text": "提醒船舶注意近期天候變化，隨時關注最新航行資訊。",
+            "wrap": true,
+            "size": "Small"
+          },
+          {
+            "type": "TextBlock",
+            "text": "建議行動：維持常規監控，留意後續公告。",
+            "wrap": true,
+            "size": "Small",
+            "weight": "Bolder",
+            "color": "Good"
+          }
+        ],
+        "actions": [
+          {
+            "type": "Action.OpenUrl",
+            "title": "📄 查看原文 1",
+            "url": "https://www.zj.msa.gov.cn/notice/0088-26.html"
+          },
+          {
+            "type": "Action.OpenUrl",
+            "title": "🗺️ 查看地圖 1",
+            "url": "https://maps.google.com/maps?q=29.183000,122.567000"
+          },
+          {
+            "type": "Action.OpenUrl",
+            "title": "📄 查看原文 2",
+            "url": "https://www.fj.msa.gov.cn/notice/0045.html"
+          },
+          {
+            "type": "Action.OpenUrl",
+            "title": "🗺️ 查看地圖 2",
+            "url": "https://maps.google.com/maps?q=24.500000,118.200000"
+          },
+          {
+            "type": "Action.OpenUrl",
+            "title": "🗺️ 查看地圖 3",
+            "url": "https://maps.google.com/maps?q=0.000000,0.000000"
+          },
+          {
+            "type": "Action.OpenUrl",
+            "title": "📄 查看原文 4",
+            "url": "https://www.sh.msa.gov.cn/notice/0012.html"
+          }
+        ]
+      }
+    }
+  ]
+}

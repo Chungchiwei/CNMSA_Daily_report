@@ -1,0 +1,15 @@
+{
+  "sources": [
+    {
+      "source_id": "fake_test_source",
+      "source_name": "測試海事局",
+      "source_type": "CN_MSA",
+      "source_country": "CN",
+      "bureau": "測試海事局",
+      "enabled": true,
+      "adapter": "fake",
+      "base_url": "https://example.com",
+      "list_url": "https://example.com/list"
+    }
+  ]
+}
