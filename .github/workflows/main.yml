@@ -6,54 +6,61 @@ on:
   workflow_dispatch:  # 允許手動觸發
     inputs:
       debug_mode:
-        description: '啟用除錯模式'
+        description: '啟用除錯模式（失敗時保存 HTML 快照到 debug/ 目錄）'
         required: false
         default: 'false'
         type: choice
         options:
           - 'true'
           - 'false'
+      dry_run:
+        description: '以 --dry-run 執行（不寫入資料庫、不發送任何通知，僅供驗證用）'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   monitor:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
-    
+
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 1
-    
+
     - name: 🐍 Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
         cache-dependency-path: 'requirements.txt'
-    
+
     - name: 📦 Install System Dependencies
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y --no-install-recommends \
           wget unzip curl xvfb \
-          libxi6 libgconf-2-4 libnss3 libxss1 \
-          libappindicator3-1 libasound2 libatk-bridge2.0-0 \
+          libxi6 libnss3 libxss1 libasound2 libatk-bridge2.0-0 \
           libgtk-3-0 libx11-xcb1 libxcomposite1 libxcursor1 \
           libxdamage1 libxfixes3 libxrandr2 libgbm1 \
           libpango-1.0-0 libcairo2 libdrm2 libxkbcommon0 \
           fonts-liberation fonts-noto-cjk fonts-wqy-zenhei \
           sqlite3
-        
+
         # 清理 apt cache
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
-    
+
     - name: 🌐 Setup Chrome and ChromeDriver
-      uses: browser-actions/setup-chrome@latest
+      uses: browser-actions/setup-chrome@v1   # 已 pin 版本，避免 @latest 上游改版導致排程突然失敗
       with:
         chrome-version: stable
-    
+
     - name: 🔍 Verify Chrome Installation
       run: |
         echo "Chrome version:"
@@ -62,49 +69,50 @@ jobs:
         which google-chrome
         echo "ChromeDriver version:"
         chromedriver --version 2>/dev/null || echo "ChromeDriver not in PATH"
-    
+
     - name: 📦 Install Python Dependencies
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install --no-cache-dir -r requirements.txt
-        
-        # 顯示已安裝的關鍵套件版本
+
         echo "::group::Installed packages"
         pip list | grep -E "(selenium|webdriver|beautifulsoup|pandas|requests|openpyxl|python-dotenv)"
         echo "::endgroup::"
-    
+
     - name: 🔧 Prepare Environment
       run: |
         # 建立必要的目錄
-        mkdir -p logs output
-        
-        # 設定環境變數
-        echo "CHROME_BINARY_LOCATION=$(which google-chrome)" >> $GITHUB_ENV
-        echo "CHROMEDRIVER_PATH=$(which chromedriver)" >> $GITHUB_ENV
-        
-        # 檢查 Secrets 設定
+        # debug/  -> --save-debug 失敗快照 (cn_sources/central.py _save_debug_snapshot)
+        # reports/-> Email 預覽 / 匯出報表
+        # backups/-> 資料庫備份
+        mkdir -p logs debug reports backups
+
+        # CHROMEDRIVER_PATH 會被 n8n_msa_monitor.py 讀取 (_find_chromedriver)，用來避免每次都重新下載 driver
+        echo "CHROMEDRIVER_PATH=$(which chromedriver)" >> "$GITHUB_ENV"
+
+        # 檢查 Secrets 設定（僅顯示是否已設定，不輸出實際內容）
         echo "::group::檢查環境設定"
-        
+
         if [ -z "${{ secrets.TEAMS_WEBHOOK_URL }}" ]; then
           echo "⚠️ TEAMS_WEBHOOK_URL 未設定"
         else
           echo "✅ TEAMS_WEBHOOK_URL 已設定"
         fi
-        
+
         if [ -z "${{ secrets.MAIL_USER }}" ] || [ -z "${{ secrets.MAIL_PASSWORD }}" ]; then
           echo "⚠️ Email 設定不完整"
         else
           echo "✅ Email 設定完整"
         fi
-        
+
         if [ -z "${{ secrets.TARGET_EMAIL }}" ]; then
           echo "⚠️ TARGET_EMAIL 未設定"
         else
           echo "✅ TARGET_EMAIL 已設定"
         fi
-        
+
         echo "::endgroup::"
-        
+
         # 檢查關鍵字設定檔
         if [ -f "keywords_config.json" ]; then
           echo "✅ 關鍵字設定檔存在"
@@ -114,7 +122,7 @@ jobs:
         else
           echo "⚠️ 關鍵字設定檔不存在，將使用預設值"
         fi
-    
+
     - name: 🚀 Run Multi-Source Monitor
       id: monitor
       shell: bash
@@ -123,195 +131,186 @@ jobs:
         MAIL_USER: ${{ secrets.MAIL_USER }}
         MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
+        MAIL_SMTP_SERVER: ${{ secrets.MAIL_SMTP_SERVER || 'smtp.gmail.com' }}
+        MAIL_SMTP_PORT: ${{ secrets.MAIL_SMTP_PORT || '587' }}
+        CA_BUNDLE_PATH: ${{ secrets.CA_BUNDLE_PATH }}
         PYTHONUNBUFFERED: '1'
-        CHROME_PATH: /usr/bin/google-chrome
-        CHROMEDRIVER_PATH: /usr/bin/chromedriver
-        DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
       run: |
         set -o pipefail
-        
+
+        # debug_mode input 對應到 --save-debug CLI 旗標（程式讀 args.save_debug，
+        # 不是環境變數，這裡不要再用 DEBUG_MODE env，程式不會讀）
+        ARGS=""
+        if [ "${{ github.event.inputs.debug_mode }}" == "true" ]; then
+          ARGS="$ARGS --save-debug"
+        fi
+        if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+          ARGS="$ARGS --dry-run"
+        fi
+        echo "執行參數: $ARGS"
+
         MAX_RETRIES=3
         RETRY_COUNT=0
         EXIT_CODE=1
-        
+
         while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $EXIT_CODE -ne 0 ]; do
           echo "::group::🔄 執行監控 (嘗試 $((RETRY_COUNT + 1))/$MAX_RETRIES)"
-          
-          # 記錄開始時間
+
           START_TIME=$(date +%s)
-          
-          # 執行監控程式
+
           if xvfb-run --auto-servernum \
              --server-args="-screen 0 1920x1080x24 -ac +extension GLX +render -noreset" \
-             timeout 25m python n8n_msa_monitor.py 2>&1 | tee "logs/monitor_$(date +%Y%m%d_%H%M%S).log"; then
-            
+             timeout 25m python n8n_msa_monitor.py $ARGS 2>&1 | tee "logs/monitor_$(date +%Y%m%d_%H%M%S).log"; then
+
             EXIT_CODE=0
             END_TIME=$(date +%s)
             DURATION=$((END_TIME - START_TIME))
-            
+
             echo "✅ 執行成功 (耗時: ${DURATION}秒)"
-            echo "EXECUTION_TIME=${DURATION}" >> $GITHUB_OUTPUT
-            echo "EXECUTION_STATUS=success" >> $GITHUB_OUTPUT
-            
+            echo "EXECUTION_TIME=${DURATION}" >> "$GITHUB_OUTPUT"
+            echo "EXECUTION_STATUS=success" >> "$GITHUB_OUTPUT"
+
           else
             EXIT_CODE=$?
             END_TIME=$(date +%s)
             DURATION=$((END_TIME - START_TIME))
-            
+
             echo "❌ 執行失敗 (Exit Code: $EXIT_CODE, 耗時: ${DURATION}秒)"
-            
-            # 嘗試截圖（如果有錯誤）
-            if [ -f "error_screenshot.png" ]; then
-              cp error_screenshot.png "logs/error_screenshot_retry${RETRY_COUNT}.png"
-            fi
-            
+
             RETRY_COUNT=$((RETRY_COUNT + 1))
-            
+
             if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
               echo "⏳ 等待 30 秒後重試..."
               sleep 30
             fi
           fi
-          
+
           echo "::endgroup::"
         done
-        
+
         set +o pipefail
-        
+
         if [ $EXIT_CODE -ne 0 ]; then
-          echo "EXECUTION_STATUS=failed" >> $GITHUB_OUTPUT
+          echo "EXECUTION_STATUS=failed" >> "$GITHUB_OUTPUT"
           echo "::error::監控程式執行失敗 (已重試 $MAX_RETRIES 次)"
           exit 1
         fi
-    
+
     - name: 📊 Generate Execution Summary
       if: always()
       run: |
-        echo "## 🌊 多源海事警告監控執行報告" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # 執行狀態
+        echo "## 🌊 多源海事警告監控執行報告" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+
         if [ "${{ steps.monitor.outputs.EXECUTION_STATUS }}" == "success" ]; then
-          echo "### ✅ 執行狀態: 成功" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ 執行狀態: 成功" >> "$GITHUB_STEP_SUMMARY"
         else
-          echo "### ❌ 執行狀態: 失敗" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ 執行狀態: 失敗" >> "$GITHUB_STEP_SUMMARY"
         fi
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # 執行時間
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+
         if [ -n "${{ steps.monitor.outputs.EXECUTION_TIME }}" ]; then
-          echo "- ⏱️ 執行時間: ${{ steps.monitor.outputs.EXECUTION_TIME }} 秒" >> $GITHUB_STEP_SUMMARY
+          echo "- ⏱️ 執行時間: ${{ steps.monitor.outputs.EXECUTION_TIME }} 秒" >> "$GITHUB_STEP_SUMMARY"
         fi
-        
-        # 資料庫檔案分析
+
         if [ -f "navigation_warnings.db" ]; then
           DB_SIZE=$(du -h navigation_warnings.db | cut -f1)
-          echo "- 📦 資料庫大小: $DB_SIZE" >> $GITHUB_STEP_SUMMARY
-          
-          # 使用 sqlite3 查詢統計資訊
+          echo "- 📦 資料庫大小: $DB_SIZE" >> "$GITHUB_STEP_SUMMARY"
+
           if command -v sqlite3 &> /dev/null; then
             TOTAL_RECORDS=$(sqlite3 navigation_warnings.db "SELECT COUNT(*) FROM warnings;" 2>/dev/null || echo "N/A")
             CN_RECORDS=$(sqlite3 navigation_warnings.db "SELECT COUNT(*) FROM warnings WHERE source_type='CN_MSA';" 2>/dev/null || echo "N/A")
             TW_RECORDS=$(sqlite3 navigation_warnings.db "SELECT COUNT(*) FROM warnings WHERE source_type='TW_MPB';" 2>/dev/null || echo "N/A")
-            
-            echo "- 📝 總記錄數: $TOTAL_RECORDS" >> $GITHUB_STEP_SUMMARY
-            echo "  - 🇨🇳 中國海事局: $CN_RECORDS" >> $GITHUB_STEP_SUMMARY
-            echo "  - 🇹🇼 台灣航港局: $TW_RECORDS" >> $GITHUB_STEP_SUMMARY
+            UKMTO_RECORDS=$(sqlite3 navigation_warnings.db "SELECT COUNT(*) FROM warnings WHERE source_type='UKMTO';" 2>/dev/null || echo "N/A")
+
+            echo "- 📝 總記錄數: $TOTAL_RECORDS" >> "$GITHUB_STEP_SUMMARY"
+            echo "  - 🇨🇳 中國海事局: $CN_RECORDS" >> "$GITHUB_STEP_SUMMARY"
+            echo "  - 🇹🇼 台灣航港局: $TW_RECORDS" >> "$GITHUB_STEP_SUMMARY"
+            echo "  - 🌊 UKMTO: $UKMTO_RECORDS" >> "$GITHUB_STEP_SUMMARY"
           fi
         else
-          echo "- ⚠️ 未產生資料庫檔案" >> $GITHUB_STEP_SUMMARY
+          echo "- ⚠️ 未產生資料庫檔案" >> "$GITHUB_STEP_SUMMARY"
         fi
-        
-        # Excel 檔案
-        EXCEL_COUNT=$(ls -1 *.xlsx 2>/dev/null | wc -l)
-        if [ "$EXCEL_COUNT" -gt 0 ]; then
-          EXCEL_SIZE=$(du -ch *.xlsx 2>/dev/null | tail -1 | cut -f1)
-          echo "- 📊 Excel 檔案: $EXCEL_COUNT 個 (總大小: $EXCEL_SIZE)" >> $GITHUB_STEP_SUMMARY
-          
-          # 列出 Excel 檔案名稱
-          echo "  - 檔案列表:" >> $GITHUB_STEP_SUMMARY
-          ls -1 *.xlsx 2>/dev/null | while read file; do
-            echo "    - $file" >> $GITHUB_STEP_SUMMARY
-          done
-        fi
-        
-        # 關鍵字設定
+
         if [ -f "keywords_config.json" ]; then
           KEYWORD_COUNT=$(jq -r '.keywords | length' keywords_config.json 2>/dev/null || echo "N/A")
           CATEGORY_COUNT=$(jq -r '.categories | length' keywords_config.json 2>/dev/null || echo "N/A")
-          echo "- 🔑 關鍵字數量: $KEYWORD_COUNT (分類: $CATEGORY_COUNT)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔑 關鍵字數量: $KEYWORD_COUNT (分類: $CATEGORY_COUNT)" >> "$GITHUB_STEP_SUMMARY"
         fi
-        
-        # 日誌檔案
+
         LOG_COUNT=$(ls -1 logs/*.log 2>/dev/null | wc -l)
         if [ "$LOG_COUNT" -gt 0 ]; then
-          echo "- 📄 日誌檔案: $LOG_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- 📄 日誌檔案: $LOG_COUNT" >> "$GITHUB_STEP_SUMMARY"
         fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "---" >> $GITHUB_STEP_SUMMARY
-        echo "🕐 執行時間: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | $(TZ='Asia/Taipei' date '+%Y-%m-%d %H:%M:%S TPE')" >> $GITHUB_STEP_SUMMARY
-        echo "🔢 Run Number: #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-        
-        # 如果有最新的警告，顯示摘要
+
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "---" >> "$GITHUB_STEP_SUMMARY"
+        echo "🕐 執行時間: $(date -u '+%Y-%m-%d %H:%M:%S UTC') | $(TZ='Asia/Taipei' date '+%Y-%m-%d %H:%M:%S TPE')" >> "$GITHUB_STEP_SUMMARY"
+        echo "🔢 Run Number: #${{ github.run_number }}" >> "$GITHUB_STEP_SUMMARY"
+
         if [ -f "navigation_warnings.db" ] && command -v sqlite3 &> /dev/null; then
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 最新警告摘要" >> $GITHUB_STEP_SUMMARY
-          
-          # 最近 24 小時的警告
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### 📋 最新警告摘要" >> "$GITHUB_STEP_SUMMARY"
+
           RECENT_COUNT=$(sqlite3 navigation_warnings.db "SELECT COUNT(*) FROM warnings WHERE datetime(scrape_time) > datetime('now', '-1 day');" 2>/dev/null || echo "0")
-          
+
           if [ "$RECENT_COUNT" -gt 0 ]; then
-            echo "- 🆕 最近 24 小時: $RECENT_COUNT 筆新警告" >> $GITHUB_STEP_SUMMARY
-            
-            # 列出最新的 5 筆
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "最新 5 筆警告:" >> $GITHUB_STEP_SUMMARY
-            sqlite3 navigation_warnings.db "SELECT '- ' || source_type || ' | ' || bureau || ' | ' || substr(title, 1, 50) || '...' FROM warnings ORDER BY scrape_time DESC LIMIT 5;" 2>/dev/null >> $GITHUB_STEP_SUMMARY || true
+            echo "- 🆕 最近 24 小時: $RECENT_COUNT 筆新警告" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "最新 5 筆警告:" >> "$GITHUB_STEP_SUMMARY"
+            sqlite3 navigation_warnings.db "SELECT '- ' || source_type || ' | ' || bureau || ' | ' || substr(title, 1, 50) || '...' FROM warnings ORDER BY scrape_time DESC LIMIT 5;" 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || true
           else
-            echo "- ℹ️ 最近 24 小時無新警告" >> $GITHUB_STEP_SUMMARY
+            echo "- ℹ️ 最近 24 小時無新警告" >> "$GITHUB_STEP_SUMMARY"
           fi
         fi
-    
-    - name: 📤 Upload Database and Excel
-      if: success()
+
+    - name: 📤 Upload Database
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: monitoring-results-${{ github.run_number }}
         path: |
           navigation_warnings.db
-          *.xlsx
           keywords_config.json
         retention-days: 30
         if-no-files-found: warn
         compression-level: 6
-    
-    - name: 📤 Upload Execution Logs
+
+    # 目前主流程未呼叫 database_manager.py 的 export_to_excel()，不會自動產生 .xlsx，
+    # 因此拿掉了原本的 *.xlsx 上傳步驟（留著只會每次顯示 warn）。
+    # 若之後要恢復 Excel 匯出，需要先在 n8n_msa_monitor.py 主流程中加上呼叫。
+
+    - name: 📤 Upload Logs and Debug Snapshots
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: execution-logs-${{ github.run_number }}
         path: |
           logs/*.log
-          logs/*.png
-          error_log.txt
-          error_screenshot*.png
+          debug/**
         retention-days: 7
         if-no-files-found: ignore
-    
+
+    - name: 📤 Upload Reports (Email preview etc.)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: reports-${{ github.run_number }}
+        path: reports/
+        retention-days: 30
+        if-no-files-found: ignore
+
     - name: 🔔 Notify on Failure
       if: failure()
       run: |
         echo "::error::監控程式執行失敗，請檢查日誌"
-        
-        # 如果有錯誤日誌，顯示最後 50 行
+
         if ls logs/monitor_*.log 1> /dev/null 2>&1; then
           echo "::group::最近的錯誤日誌"
           tail -n 50 $(ls -t logs/monitor_*.log | head -1)
           echo "::endgroup::"
         fi
-        
-        # 檢查資料庫是否存在但為空
+
         if [ -f "navigation_warnings.db" ]; then
           RECORD_COUNT=$(sqlite3 navigation_warnings.db "SELECT COUNT(*) FROM warnings;" 2>/dev/null || echo "0")
           if [ "$RECORD_COUNT" -eq 0 ]; then
