@@ -125,3 +125,33 @@ python -m pytest tests/ -v
 3. 台灣航港局／UKMTO 爬蟲本次未修改（避免既有功能退化），僅在通知前統一補上風險評分；若要讓其標題/內文判斷邏輯與中國來源一致（先抓詳情再判斷關鍵字），需另外排期處理。
 4. `geofence_and_risk_module.py`（船位地理圍欄）目前未整合進主流程，因系統尚無即時船位資料來源；`shapely` 已補進 `requirements.txt` 但屬選用功能。
 5. 通知去重目前以「新增或內容變更」為準；「風險等級上升」「有效期間變更」的精確比對邏輯可在下一階段強化（目前內容變更會一併觸發重新通知，已涵蓋大部分情境但未做欄位級別的差異判斷）。
+
+## GitHub Actions 自動執行
+
+本專案內建兩個 workflow（`.github/workflows/`）：
+
+- `ci.yml`：每次 push／PR 自動執行 `python -m compileall` 與 `pytest`（不連真實網路/信箱/Webhook）。
+- `main.yml`：排程執行 `n8n_msa_monitor.py`（預設每 6 小時一次，UTC 時區，可在檔案內調整 cron），
+  也可在 Actions 頁面手動觸發（`workflow_dispatch`），並可選擇 `dry_run` 或 `source` 參數。
+
+### 設定步驟
+
+1. 到 GitHub Repository → Settings → Secrets and variables → Actions，新增以下 Repository secrets：
+
+   | Secret 名稱 | 說明 | 必填 |
+   |---|---|---|
+   | `MAIL_USER` | 寄件 Gmail 帳號 | 是（若要 Email 通知） |
+   | `MAIL_PASSWORD` | Gmail 應用程式密碼（非登入密碼） | 是（若要 Email 通知） |
+   | `TARGET_EMAIL` | 收件者信箱 | 是（若要 Email 通知） |
+   | `TEAMS_WEBHOOK_URL` | Microsoft Teams Webhook 網址 | 是（若要 Teams 通知） |
+   | `MAIL_SMTP_SERVER` | SMTP 伺服器，預設 `smtp.gmail.com` | 否 |
+   | `MAIL_SMTP_PORT` | SMTP 埠號，預設 `587` | 否 |
+   | `CA_BUNDLE_PATH` | 自訂 CA bundle 路徑（企業網路才需要） | 否 |
+
+   **不要**把上述任何值寫進程式碼、`.env`、或直接提交到 Git；一律透過上方 Secrets 設定，workflow 執行時只會以環境變數形式注入，不會落地成檔案。
+
+2. Repository 建議設為 **Private**（尤其若 `.env.example` 以外還放了任何內部資訊）。
+3. 確認 Actions 分頁已啟用（Settings → Actions → General → Allow all actions）。
+4. 手動觸發一次 `main.yml`（Actions → Maritime Warning Monitor → Run workflow），先用 `dry_run=true` 確認可正常執行、Chrome 安裝成功、Secrets 讀取正確，再改回正常排程執行。
+5. 每次執行完成後，資料庫（`navigation_warnings.db`）、`reports/`、`logs/` 會作為 Artifact 上傳（保留 7～30 天），可在該次 Run 頁面下載；這些檔案不會、也不應提交回 Git。
+6. 中國海事局各地方來源 selector 仍待在可連線中國網路的環境驗證（見上方「已知限制」）；建議先以 `workflow_dispatch` + `source=cn` + `dry_run=true` 手動跑一次，觀察 log 判斷各來源健康狀態。
