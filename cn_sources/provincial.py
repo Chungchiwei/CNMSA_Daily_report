@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
@@ -21,7 +22,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from cn_sources.base import BaseMaritimeSource
+from cn_sources.base import BaseMaritimeSource, SourceBlockedError
 from services.content_cleaner import clean_html, truncate
 from services.ssl_config import resolve_ssl_verify
 
@@ -57,36 +58,81 @@ class ProvincialMSASource(BaseMaritimeSource):
         config: Dict,
         coordinate_extractor: Optional[Callable[[str], List]] = None,
         session: Optional[requests.Session] = None,
+        save_debug: bool = False,
+        debug_dir: str = "debug",
     ):
         super().__init__(source_id, config)
         self.selectors = config.get("selectors", {})
         self.needs_verification = bool(config.get("needs_verification", False))
         self._coordinate_extractor = coordinate_extractor or (lambda text: [])
         self._session = session or requests.Session()
-        self._session.headers.update({"User-Agent": _DEFAULT_UA})
+        # 補上完整的瀏覽器慣用 headers（不只 User-Agent）。許多政府網站的反爬機制會
+        # 檢查是否具備一般瀏覽器都會送出的 Accept/Accept-Language/Referer 等欄位，
+        # 缺少時直接視為爬蟲並回 403，這與是否使用 Selenium 無關，屬於一般 HTTP 禮貌性欄位。
+        self._session.headers.update({
+            "User-Agent": _DEFAULT_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Connection": "keep-alive",
+            "Referer": config.get("base_url") or config.get("list_url") or "",
+        })
         self._ssl_verify = resolve_ssl_verify()
         self._last_selector_strategy = ""
+        self.save_debug = save_debug
+        self.debug_dir = debug_dir
 
     # ------------------------------------------------------------------
+    def _save_debug_snapshot(self, name: str, html: str):
+        if not self.save_debug:
+            return
+        try:
+            os.makedirs(self.debug_dir, exist_ok=True)
+            path = os.path.join(self.debug_dir, f"{self.source_id}_{name}_{int(time.time())}.html")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html or "")
+        except Exception:
+            pass
+
     def _get(self, url: str) -> requests.Response:
         resp = self._session.get(url, timeout=_DEFAULT_TIMEOUT, verify=self._ssl_verify)
+        if resp.status_code in (401, 403, 429, 451):
+            # 站台有回應但拒絕存取，很可能是 WAF／反爬封鎖（也可能是來源 IP 本身被
+            # 政府網站封鎖，例如雲端/機房 IP 段），與單純連不上網路的意義不同，
+            # 獨立分類成 BLOCKED 以利判讀（claude.md 十四）。
+            self._save_debug_snapshot(
+                f"blocked_{resp.status_code}",
+                f"URL: {url}\nStatus: {resp.status_code}\nHeaders: {dict(resp.headers)}\n\n{resp.text[:5000]}",
+            )
+            raise SourceBlockedError(
+                f"{self.source_name} 回應 HTTP {resp.status_code}，疑似遭反爬蟲機制封鎖: {url}",
+                status_code=resp.status_code,
+            )
         resp.raise_for_status()
         return resp
 
     def fetch_list(self) -> List[Dict]:
         candidate_urls = [self.list_url] + list(self.config.get("alt_list_urls", []))
         last_exc = None
+        last_blocked: Optional[SourceBlockedError] = None
         for url in candidate_urls:
             if not url:
                 continue
             try:
                 resp = self._get(url)
+            except SourceBlockedError as exc:
+                last_blocked = exc
+                continue
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 continue
             items = self.parse_list(resp.text)
             if items:
                 return items
+            # HTTP 成功但解析不到任何項目：保存快照方便之後調整 selector
+            # （claude.md 四：HTTP 200 但 0 筆不得視為成功，需可診斷）
+            self._save_debug_snapshot("empty_list", resp.text)
+        if last_blocked is not None:
+            raise last_blocked
         if last_exc is not None:
             raise ConnectionError(f"{self.source_name} 所有候選列表網址均無法連線: {last_exc}")
         return []

@@ -28,15 +28,19 @@ from bs4 import BeautifulSoup
 from cn_sources.base import BaseMaritimeSource
 from services.content_cleaner import clean_html, truncate
 
-DEFAULT_LIST_CONTAINER_SELECTORS = [".right_main", "#right_main", ".conMain", ".list_1"]
+# 2026-08-06 使用者於實機環境回報實際 HTML 結構後確認：警告列表容器是
+# .main_list_ul（.right_main 等舊版候選從未在目前版面出現過，保留當額外備援）。
+DEFAULT_LIST_CONTAINER_SELECTORS = [".main_list_ul", ".right_main", "#right_main", ".conMain", ".list_1"]
 DEFAULT_BUREAU_MENU_SELECTORS = [".nav_lv2_list .nav_lv2_text", ".nav_lv2_text", ".leftMenu li a"]
 DEFAULT_NAV_TRIGGER_TEXTS = ["航行警告", "航行通警告", "航行通告"]
 
+# 2026-08-06 使用者實機回報展開後的省級選單完整清單（逐字保留，取代原本的猜測清單），
+# 僅在即時抓取的 bureau_menu selector 全部失效時作為最後備援。
 FALLBACK_BUREAUS = [
-    "天津海事局", "河北海事局", "辽宁海事局", "山东海事局",
-    "上海海事局", "江苏海事局", "浙江海事局", "福建海事局",
-    "广东海事局", "广西海事局", "海南海事局", "长江海事局",
-    "黑龙江海事局", "连云港海事局", "深圳海事局",
+    "上海海事局", "天津海事局", "辽宁海事局", "河北海事局",
+    "山东海事局", "浙江海事局", "福建海事局", "广东海事局",
+    "广西海事局", "海南海事局", "长江海事局", "江苏海事局",
+    "深圳海事局", "连云港海事局", "江苏省地方海事局", "江西省地方海事局",
 ]
 
 
@@ -60,8 +64,16 @@ def parse_warning_list_html(html: str, container_selectors: Optional[List[str]] 
 
     items = []
     for a_tag in container.find_all("a"):
-        title = (a_tag.get("title") or a_tag.get_text(strip=True) or "").strip()
-        title = re.sub(r"\s*\d{4}-\d{2}-\d{2}\s*$", "", title).strip()
+        # 實機確認的真實結構：<a><span class="name">標題</span><span class="time">日期</span></a>，
+        # 優先用 span.name 取標題，比「整個 <a> 的文字扣掉結尾日期」更明確、不怕標題本身
+        # 剛好也含有類似日期的字串。找不到 span.name 時才退回舊版的整段文字＋正規表示式作法
+        # （相容其他可能沒有 span.name 結構的海事局頁面）。
+        name_span = a_tag.find(class_="name")
+        if name_span and name_span.get_text(strip=True):
+            title = name_span.get_text(strip=True)
+        else:
+            title = (a_tag.get("title") or a_tag.get_text(strip=True) or "").strip()
+            title = re.sub(r"\s*\d{4}-\d{2}-\d{2}\s*$", "", title).strip()
         if not title:
             continue
 
@@ -186,22 +198,44 @@ class CentralMSASource(BaseMaritimeSource):
         self.driver.get(self.list_url)
         time.sleep(5)
 
+        # 2026-08 實機回報：目前導覽項目是一個自訂 ARIA 下拉元件（role="select"），
+        # 例如 <span aria-label="下拉框,航行警告,..." aria-owns="...">航行警告<img .../></span>，
+        # 而不是單純文字節點。同一個候選文字改用多種策略嘗試，任何一種成功即可：
+        #   1. aria-label 屬性包含候選文字（最精確，ARIA 元件通常會設定描述性 aria-label）
+        #   2. 任何元素的直接文字節點包含候選文字（沿用舊版邏輯，兼容純文字導覽）
+        #   3. .left_nav 容器內任何元素文字包含候選文字（範圍更寬鬆的備援）
+        nav_click_strategies = [
+            "//*[contains(@aria-label, '{text}')]",
+            "//span[contains(text(), '{text}')]",
+            "//*[contains(@class, 'left_nav')]//*[contains(text(), '{text}')]",
+        ]
+
         clicked = False
         for nav_text in nav_texts:
-            try:
-                nav_btn = wait.until(
-                    EC.element_to_be_clickable((By.XPATH, f"//span[contains(text(), '{nav_text}')]"))
-                )
-                self.driver.execute_script("arguments[0].click();", nav_btn)
-                time.sleep(3)
-                clicked = True
+            for strategy in nav_click_strategies:
+                xpath = strategy.format(text=nav_text)
+                try:
+                    nav_btn = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
+                    self.driver.execute_script("arguments[0].click();", nav_btn)
+                    time.sleep(3)
+                    clicked = True
+                    self._last_selector_strategy = f"nav={xpath!r}"
+                    break
+                except Exception:
+                    continue
+            if clicked:
                 break
-            except Exception:
-                continue
 
         if not clicked:
             self._save_debug_snapshot("nav_click_failed", self.driver.page_source)
-            raise ConnectionError("找不到「航行警告」導覽按鈕，候選文字皆未命中，可能頁面結構已變更")
+            # 這是「頁面已載入但候選文字/選擇器都找不到導覽按鈕」，屬於頁面結構改版導致的
+            # 解析問題，不是網路連線失敗，因此不能用 ConnectionError（會被 base.run() 誤判為
+            # CONNECTION_ERROR）。改用一般 Exception，讓 base.run() 分類為 PARSE_ERROR，
+            # 並保留完整訊息方便從 error_summary 判讀原因。
+            raise RuntimeError(
+                "PARSE_ERROR: 找不到「航行警告」導覽按鈕，候選文字皆未命中，"
+                "可能頁面結構已變更，請查看已儲存的 debug 快照（nav_click_failed）"
+            )
 
         bureaus: List[str] = []
         for menu_sel in menu_selectors:

@@ -721,7 +721,9 @@ class TWMaritimePortBureauScraper:
     def __init__(self, db_manager, keyword_manager, teams_notifier, coord_extractor, days=3):
         self.db_manager      = db_manager
         self.keyword_manager = keyword_manager
-        self.keywords        = keyword_manager.get_keywords()
+        # claude.md 五：不要讓所有來源共用未經分類的全部關鍵字，改用來源專屬清單
+        # （get_keywords_by_source 已改為以 categories 分類為準，見 keyword_manager.py）
+        self.keywords        = keyword_manager.get_keywords_by_source("TW_MPB")
         self.teams_notifier  = teams_notifier
         self.coord_extractor = coord_extractor
         self.base_url        = "https://www.motcmpb.gov.tw/Information/Notice?SiteId=1&NodeId=483"
@@ -896,6 +898,9 @@ class TWMaritimePortBureauScraper:
                         continue
 
                     coordinates  = []
+                    detail_text  = ""  # claude.md 五：關鍵字判斷應在抓到詳細內文之後進行，
+                                        # 而不是只用標題；這裡把抓到的內文存下來供後續風險評分／摘要使用
+                                        # （先前這段內文只被拿去抽座標，抽完就丟棄，從未真正參與判斷）
                     title_coords = self.coord_extractor.extract_coordinates(title)
                     if title_coords:
                         coordinates.extend(title_coords)
@@ -916,6 +921,7 @@ class TWMaritimePortBureauScraper:
                                 detail_soup.find('div', id='container')
                             )
                             if content_div:
+                                detail_text = content_div.get_text(" ", strip=True)[:3000]
                                 for pc in self.coord_extractor.extract_coordinates(content_div.get_text()):
                                     if pc not in coordinates:
                                         coordinates.append(pc)
@@ -924,7 +930,7 @@ class TWMaritimePortBureauScraper:
                             self.driver.set_page_load_timeout(60)
                             time.sleep(1)
                         except Exception as e:
-                            print(f"          ⚠️ 無法從網頁提取座標: {e}")
+                            print(f"          ⚠️ 無法從網頁提取詳細內文/座標: {e}")
                             try:
                                 if len(self.driver.window_handles) > 1:
                                     self.driver.close()
@@ -946,7 +952,8 @@ class TWMaritimePortBureauScraper:
                             'id': w_id, 'bureau': unit, 'title': title,
                             'link': link, 'time': date, 'keywords': matched_keywords,
                             'source': 'TW_MPB', 'category': category_name,
-                            'coordinates': coordinates, 'coord_source': 'text'
+                            'coordinates': coordinates, 'coord_source': 'text',
+                            'details': detail_text,
                         }
                         if is_today:
                             self.new_warnings_today.append(w_id)

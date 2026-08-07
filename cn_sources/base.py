@@ -27,6 +27,14 @@ class SourceHealthStatus(str, Enum):
     DISABLED = "DISABLED"
 
 
+class SourceBlockedError(Exception):
+    """網站有回應但拒絕存取（HTTP 401/403/429/451 等），代表可能被 WAF／反爬機制封鎖，
+    語意上不同於「連不上網路」的 CONNECTION_ERROR，需獨立分類方便判讀（claude.md 十四）。"""
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 @dataclass
 class SourceHealthReport:
     source_id: str
@@ -176,6 +184,10 @@ class BaseMaritimeSource:
             else:
                 report.final_status = SourceHealthStatus.HEALTHY
 
+        except SourceBlockedError as exc:
+            report.final_status = SourceHealthStatus.BLOCKED
+            report.error_type = type(exc).__name__
+            report.error_summary = str(exc)[:200]
         except (ConnectionError, OSError, TimeoutError) as exc:
             report.final_status = SourceHealthStatus.CONNECTION_ERROR
             report.error_type = type(exc).__name__

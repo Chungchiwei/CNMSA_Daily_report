@@ -73,7 +73,10 @@ def _build_source(source_id: str, cfg: Dict, coordinate_extractor, headless: boo
             source_id, cfg, coordinate_extractor=coordinate_extractor,
             headless=headless, save_debug=save_debug, debug_dir=debug_dir,
         )
-    return ProvincialMSASource(source_id, cfg, coordinate_extractor=coordinate_extractor)
+    return ProvincialMSASource(
+        source_id, cfg, coordinate_extractor=coordinate_extractor,
+        save_debug=save_debug, debug_dir=debug_dir,
+    )
 
 
 class CNSourceRegistry:

@@ -296,17 +296,48 @@ class KeywordManager:
         return self.keywords.copy()
 
     def get_keywords_by_source(self, source_type):
-        """根據來源類型獲取相關關鍵字"""
+        """根據來源類型獲取相關關鍵字。
+
+        改為以 keywords_config.json 既有的 categories 分類為準，而不是逐字的
+        detect_language() 語言偵測。原因：detect_language() 只認得一組寫死的
+        15 個繁體特徵字（見上方 traditional_chars），像「演訓」「射擊公告」
+        「限航區」這類常見詞完全不含那些特徵字，會被誤判成簡體/CN，導致
+        get_keywords_by_source("TW_MPB") 把這些明明是台灣航港局常用詞的關鍵字
+        排除在外。改用分類判斷後，只需排除「屬於對方國家專屬」的分類
+        （中國特有／台灣特有），其餘共用分類（武器發射／軍事演習／區域管制／
+        危險作業／船艦類型／航空器／偵測設備／海事通告）雙方都會拿到，不再
+        依賴不可靠的單字判斷。
+        """
+        if not self.keyword_categories:
+            return self.get_keywords()
+
         if source_type == "TW_MPB":
-            # 台灣航港局：繁體中文 + 英文 + 台灣特有
-            return [k for k in self.keywords if self.detect_language(k) in ['TW', 'EN']]
-
+            exclude_categories = {"中國特有"}
         elif source_type == "CN_MSA":
-            # 中國海事局：簡體中文 + 英文 + 中國特有
-            return [k for k in self.keywords if self.detect_language(k) in ['CN', 'EN']]
-
+            exclude_categories = {"台灣特有"}
         else:
-            return self.keywords.copy()
+            exclude_categories = set()
+
+        result = []
+        seen = set()
+        for category, kws in self.keyword_categories.items():
+            if category in exclude_categories:
+                continue
+            for kw in kws:
+                if kw not in seen:
+                    seen.add(kw)
+                    result.append(kw)
+
+        # 保留不屬於任何分類的舊資料相容（flat keywords 裡有些詞可能沒有掛分類）
+        categorized = set()
+        for kws in self.keyword_categories.values():
+            categorized.update(kws)
+        for kw in self.keywords:
+            if kw not in categorized and kw not in seen:
+                seen.add(kw)
+                result.append(kw)
+
+        return result
 
     def import_keywords(self, keywords_list, category=None):
         """批量匯入關鍵字"""

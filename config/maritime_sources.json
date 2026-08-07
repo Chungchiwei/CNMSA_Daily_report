@@ -10,16 +10,17 @@
       "enabled": true,
       "adapter": "central_selenium",
       "base_url": "https://www.msa.gov.cn",
-      "list_url": "https://www.msa.gov.cn/page/outter/weather.jsp",
+      "list_url": "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html",
       "alt_list_urls": [
+        "https://www.msa.gov.cn/page/outter/weather.jsp",
         "https://www.msa.gov.cn/page/channelArticles.do?channelids=9C219298-B27F-460E-995A-99401B3FF6AF",
         "https://www.msa.gov.cn/html/hxaq/aqxx/index.html"
       ],
       "needs_verification": false,
-      "notes": "既有邏輯：Selenium 點擊「航行警告」→ 依海事局選單逐一點擊列表。已加入多組 selector 候選與逐局失敗不中止機制。",
+      "notes": "2026-08-06 使用者於實機環境回報實際網址與導覽元件結構：list_url 已修正為 /html/cnmsa/hxaq/aqxx/index.html（先前設定漏了 /cnmsa/ 路徑片段，查詢字串 ?hcv=... 看起來是每次部署會變的快取版本號，未寫死）；「航行警告」導覽項目為 role=\"select\" 的自訂 ARIA 下拉元件，aria-label 含「航行警告」文字，aria-owns 指向 .left_nav > ul > li:nth-child(2) > ul 子選單，已新增以 aria-label 比對與 .left_nav 容器內比對作為候選點擊策略（見 central.py fetch_list）。已取得展開後的省級選單與上海海事局列表頁真實 HTML：省級選單清單為 .nav_lv2 > li.nav_lv2_list > a > div.nav_lv2_text（16 個海事局，已更新 FALLBACK_BUREAUS）；警告列表容器為 ul.main_list_ul，每筆為 li.common_list.main_list_li > a，標題在 span.name、日期在 span.time（已更新 list_container 與 central.py 的標題擷取邏輯）。清單頁另有分頁（pageParam.count/limit，下一頁為 index_2.jhtml 等），目前尚未實作跨頁抓取，僅抓第一頁（近期公告通常足夠，大量 backfill 時可能不夠）。",
       "selectors": {
-        "list_container": [".right_main", "#right_main", ".conMain", ".list_1", "div.list"],
-        "bureau_menu": [".nav_lv2_list .nav_lv2_text", ".nav_lv2_text", ".leftMenu li a"],
+        "list_container": [".main_list_ul", ".right_main", "#right_main", ".conMain", ".list_1", "div.list"],
+        "bureau_menu": [".nav_lv2_list .nav_lv2_text", ".nav_lv2_text", ".leftMenu li a", ".left_nav li a", ".left_nav ul li", ".left_nav a"],
         "nav_trigger_text": ["航行警告", "航行通警告", "航行通告"]
       }
     },

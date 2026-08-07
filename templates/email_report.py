@@ -222,7 +222,11 @@ def _render_card(w: Dict, is_today: bool) -> str:
     operational_impact = _esc(w.get("operational_impact", "") or "可能影響鄰近海域商船航行安全，詳情請參閱原始公告。")
     recommended_action = _esc(w.get("recommended_action", "") or "建議通過前確認公告有效性並提高警戒。")
 
-    kw = w.get("keywords", w.get("keywords_matched", []))
+    # 優先使用新版風險評分服務算出的 matched_keywords（跟下面的「判斷依據」
+    # scoring_reasons 保證是同一份資料算出來的），舊版 keywords/keywords_matched
+    # 欄位只在還沒跑過風險評分（理論上不該發生）時當備援，避免「命中關鍵字」跟
+    # 「判斷依據」兩行對不上、讓人以為系統邏輯矛盾。
+    kw = w.get("matched_keywords") or w.get("keywords") or w.get("keywords_matched", [])
     if isinstance(kw, str):
         kw_list = [k.strip() for k in kw.split(",") if k.strip()]
     else:
