@@ -171,7 +171,15 @@ class ProvincialMSASource(BaseMaritimeSource):
 
                 items = []
                 for a_tag in resolved_anchors:
-                    title = (a_tag.get("title") or a_tag.get_text(strip=True) or "").strip()
+                    # 中央入口與部分地方海事局（msa.gov.cn 主網域下的頁面）實際結構是
+                    # <a><span class="name">標題</span><span class="time">日期</span></a>，
+                    # 優先用 span.name 取標題，避免直接取整個 <a> 文字把日期黏在標題後面
+                    # （central.py 也用同一套邏輯，見該檔案的說明）。
+                    name_span = a_tag.find(class_="name")
+                    if name_span and name_span.get_text(strip=True):
+                        title = name_span.get_text(strip=True)
+                    else:
+                        title = (a_tag.get("title") or a_tag.get_text(strip=True) or "").strip()
                     href = a_tag.get("href", "")
                     if not title or not href:
                         continue

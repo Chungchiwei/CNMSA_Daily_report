@@ -20,6 +20,11 @@ _NOISE_HINTS = (
     "nav", "menu", "footer", "header", "breadcrumb", "sidebar",
     "banner", "copyright", "share", "print", "backtop", "adv",
     "pagination", "page-turn", "friendlink",
+    # 2026-08-06 依中國海事局實際詳細頁 HTML（上海海事局「人员落水」公告）補充：
+    # 這幾個 class 名稱是真實頁面上的導覽/頁尾/工具列區塊，但字面上跟前面的
+    # 泛用字（footer/header/breadcrumb）沒有子字串重疊，若沒有指定
+    # detail_container selector、退回整個 <body> 清理時會漏抓，一併加入。
+    "foot_but", "crumbs", "head_wrap", "article-tool", "tool_bar",
 )
 
 _NOISE_TAGS = ("script", "style", "noscript", "iframe", "svg")
@@ -60,7 +65,13 @@ def clean_html(html: str, content_selectors: Iterable[str] = ()) -> str:
         content_node = soup.body or soup
 
     # 移除疑似導覽/頁尾/廣告等雜訊區塊（依 class/id 關鍵字比對）
+    # 注意：decompose() 會遞迴清空子節點（子節點 .attrs 會變成 None），
+    # 若父節點已被上一輪 decompose 掉，find_all(True) 快照裡殘留的子節點
+    # 仍會被走訪到，此時 tag.get(...) 會因 self.attrs is None 而拋出
+    # AttributeError，因此需要先跳過已被 decompose 的節點。
     for tag in list(content_node.find_all(True)):
+        if getattr(tag, "decomposed", False):
+            continue
         attrs_text = " ".join(
             str(tag.get(attr, "")) for attr in ("class", "id")
         ).lower()

@@ -19,9 +19,35 @@
       "needs_verification": false,
       "notes": "2026-08-06 使用者於實機環境回報實際網址與導覽元件結構：list_url 已修正為 /html/cnmsa/hxaq/aqxx/index.html（先前設定漏了 /cnmsa/ 路徑片段，查詢字串 ?hcv=... 看起來是每次部署會變的快取版本號，未寫死）；「航行警告」導覽項目為 role=\"select\" 的自訂 ARIA 下拉元件，aria-label 含「航行警告」文字，aria-owns 指向 .left_nav > ul > li:nth-child(2) > ul 子選單，已新增以 aria-label 比對與 .left_nav 容器內比對作為候選點擊策略（見 central.py fetch_list）。已取得展開後的省級選單與上海海事局列表頁真實 HTML：省級選單清單為 .nav_lv2 > li.nav_lv2_list > a > div.nav_lv2_text（16 個海事局，已更新 FALLBACK_BUREAUS）；警告列表容器為 ul.main_list_ul，每筆為 li.common_list.main_list_li > a，標題在 span.name、日期在 span.time（已更新 list_container 與 central.py 的標題擷取邏輯）。清單頁另有分頁（pageParam.count/limit，下一頁為 index_2.jhtml 等），目前尚未實作跨頁抓取，僅抓第一頁（近期公告通常足夠，大量 backfill 時可能不夠）。",
       "selectors": {
-        "list_container": [".main_list_ul", ".right_main", "#right_main", ".conMain", ".list_1", "div.list"],
-        "bureau_menu": [".nav_lv2_list .nav_lv2_text", ".nav_lv2_text", ".leftMenu li a", ".left_nav li a", ".left_nav ul li", ".left_nav a"],
-        "nav_trigger_text": ["航行警告", "航行通警告", "航行通告"]
+        "list_container": [
+          ".main_list_ul",
+          ".right_main",
+          "#right_main",
+          ".conMain",
+          ".list_1",
+          "div.list"
+        ],
+        "bureau_menu": [
+          ".nav_lv2_list .nav_lv2_text",
+          ".nav_lv2_text",
+          ".leftMenu li a",
+          ".left_nav li a",
+          ".left_nav ul li",
+          ".left_nav a"
+        ],
+        "nav_trigger_text": [
+          "航行警告",
+          "航行通警告",
+          "航行通告"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".right_main",
+          "#right_main"
+        ]
       }
     },
     {
@@ -32,17 +58,46 @@
       "bureau": "浙江海事局",
       "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.zj.msa.gov.cn",
-      "list_url": "https://www.zj.msa.gov.cn/",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/8e10ea74eb9e4c9690f8f891968add80/index.jhtml",
+      "alt_list_urls": [
+        "https://www.zj.msa.gov.cn/"
+      ],
       "needs_verification": true,
-      "notes": "首頁網址已透過搜尋確認存在，但航行警告子欄目路徑與 HTML 結構尚未在可連線環境驗證，需人工確認 list_url 與 selectors。",
+      "notes": "2026-08-06 使用者實機回報中央入口省級選單中「浙江海事局」的真實直連網址（同一頁展開後可見，msa.gov.cn 網域下的固定 hash 路徑），改為主要 list_url；原猜測的 zj.msa.gov.cn 子網域先前實測回應 EMPTY，改列為備援。清單結構應與中央入口相同（ul.main_list_ul），detail_container 內文頁結構仍未驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -55,15 +110,40 @@
       "adapter": "provincial_requests",
       "base_url": "https://www.js.msa.gov.cn",
       "list_url": "https://js.msa.gov.cn/col/col75/index.html",
-      "alt_list_urls": ["https://www.js.msa.gov.cn/"],
+      "alt_list_urls": [
+        "https://www.js.msa.gov.cn/"
+      ],
       "needs_verification": true,
       "notes": "list_url 為搜尋結果中的「航行通警告」欄目頁，結構尚未驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          ".conMain",
+          ".text",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -74,17 +154,46 @@
       "bureau": "上海海事局",
       "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.sh.msa.gov.cn",
-      "list_url": "https://www.sh.msa.gov.cn/hxtjgsj/index.jhtml",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/94df14ce1110415da44e67593e76619f/index.jhtml",
+      "alt_list_urls": [
+        "https://www.sh.msa.gov.cn/hxtjgsj/index.jhtml"
+      ],
       "needs_verification": true,
-      "notes": "上海海事局有獨立「航行通警告數據」頁面，結構尚未驗證。",
+      "notes": "2026-08-06 使用者實機回報：這個網址已確認就是中央入口選單裡「上海海事局」的真實直連連結，且已取得列表頁真實 HTML（ul.main_list_ul，含「拖带作业—沪航警606/26」等真實筆數），改為主要 list_url；原猜測的 sh.msa.gov.cn 子網域先前實測回應 EMPTY，改列為備援。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -93,19 +202,48 @@
       "source_type": "CN_MSA",
       "source_country": "CN",
       "bureau": "福建海事局",
-      "enabled": false,
+      "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.fj.msa.gov.cn",
-      "list_url": "https://www.fj.msa.gov.cn/",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/7b08405760384570a0fb44e9204c4b1d/index.jhtml",
+      "alt_list_urls": [
+        "https://www.fj.msa.gov.cn/"
+      ],
       "needs_verification": true,
-      "notes": "網域為推測（沿用 msa.gov.cn 省級子網域命名慣例：fj = 福建），尚未實際確認可連線，預設停用，待驗證後啟用。",
+      "notes": "2026-08-06 使用者實機回報中央入口省級選單中「福建海事局」的真實直連網址，改為主要 list_url 並啟用（原本因為只有猜測的 fj.msa.gov.cn 子網域、從未驗證過而預設停用）；原猜測子網域改列為備援。清單結構比照上海海事局的真實範例（ul.main_list_ul），但這個網址本身尚未逐一驗證過。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -114,19 +252,48 @@
       "source_type": "CN_MSA",
       "source_country": "CN",
       "bureau": "廣東海事局",
-      "enabled": false,
+      "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.gd.msa.gov.cn",
-      "list_url": "https://www.gd.msa.gov.cn/",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/1e478d409e854918bf12478b8a19f4a8/index.jhtml",
+      "alt_list_urls": [
+        "https://www.gd.msa.gov.cn/"
+      ],
       "needs_verification": true,
-      "notes": "網域為推測命名慣例，尚未實際確認，預設停用。",
+      "notes": "2026-08-06 使用者實機回報中央入口省級選單中「廣東海事局」的真實直連網址，改為主要 list_url 並啟用；原猜測子網域改列為備援，清單結構未逐一驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -135,19 +302,48 @@
       "source_type": "CN_MSA",
       "source_country": "CN",
       "bureau": "山東海事局",
-      "enabled": false,
+      "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.sd.msa.gov.cn",
-      "list_url": "https://www.sd.msa.gov.cn/",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/36ea3354c8f84953aba082d6d989c750/index.jhtml",
+      "alt_list_urls": [
+        "https://www.sd.msa.gov.cn/"
+      ],
       "needs_verification": true,
-      "notes": "網域為推測命名慣例，尚未實際確認，預設停用。",
+      "notes": "2026-08-06 使用者實機回報中央入口省級選單中「山東海事局」的真實直連網址，改為主要 list_url 並啟用；原猜測子網域改列為備援，清單結構未逐一驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -156,19 +352,48 @@
       "source_type": "CN_MSA",
       "source_country": "CN",
       "bureau": "遼寧海事局",
-      "enabled": false,
+      "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.ln.msa.gov.cn",
-      "list_url": "https://www.ln.msa.gov.cn/",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/c8896863b1014c438705536a03eb46ff/index.jhtml",
+      "alt_list_urls": [
+        "https://www.ln.msa.gov.cn/"
+      ],
       "needs_verification": true,
-      "notes": "網域為推測命名慣例，尚未實際確認，預設停用。",
+      "notes": "2026-08-06 使用者實機回報中央入口省級選單中「辽宁海事局」的真實直連網址，改為主要 list_url 並啟用；原猜測子網域改列為備援，清單結構未逐一驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -179,17 +404,46 @@
       "bureau": "海南海事局",
       "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.hn.msa.gov.cn",
-      "list_url": "https://www.hn.msa.gov.cn/hsfw_1_1/index.jhtml",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/d3340711057b494b8fa09eedc4c5ead9/index.jhtml",
+      "alt_list_urls": [
+        "https://www.hn.msa.gov.cn/hsfw_1_1/index.jhtml"
+      ],
       "needs_verification": true,
-      "notes": "海南海事局有獨立「航行警告」欄目頁（搜尋結果確認存在），結構尚未驗證。",
+      "notes": "2026-08-06 實機回報 hn.msa.gov.cn 對所有候選網址回應 HTTP 403（疑似反爬封鎖或該子網域本身有問題），改用中央入口選單裡「海南海事局」的真實直連網址（msa.gov.cn 主網域下的固定 hash 路徑）作為主要 list_url，是不同網域/路徑，也許能避開原本的 403；原網址改列為備援。清單結構未逐一驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     },
     {
@@ -198,19 +452,48 @@
       "source_type": "CN_MSA",
       "source_country": "CN",
       "bureau": "深圳海事局",
-      "enabled": false,
+      "enabled": true,
       "adapter": "provincial_requests",
-      "base_url": "https://www.szmsa.gov.cn",
-      "list_url": "https://www.szmsa.gov.cn/",
-      "alt_list_urls": [],
+      "base_url": "https://www.msa.gov.cn",
+      "list_url": "https://www.msa.gov.cn/325fdc0892b44313a63ee5c165be98ec/index.jhtml",
+      "alt_list_urls": [
+        "https://www.szmsa.gov.cn/"
+      ],
       "needs_verification": true,
-      "notes": "深圳海事局網域命名慣例與其他省級子網域不同（szmsa.gov.cn），尚未實際確認，預設停用。",
+      "notes": "2026-08-06 使用者實機回報中央入口省級選單中「深圳海事局」的真實直連網址，改為主要 list_url 並啟用；原猜測的 szmsa.gov.cn 子網域改列為備援，清單結構未逐一驗證。",
       "selectors": {
-        "list_container": [".list_1", ".conMain", "div.list", "table.list", ".newsList"],
-        "item": ["li a", "tr td a", ".list_1 li a"],
-        "date": [".time", "span.date", "td.date"],
-        "next_page": [".next", "a:contains(下一页)", "a.next-page"],
-        "detail_container": [".conMain", ".text", "#zoom", ".article-content"]
+        "list_container": [
+          ".main_list_ul",
+          ".list_1",
+          ".conMain",
+          "div.list",
+          "table.list",
+          ".newsList"
+        ],
+        "item": [
+          "li a",
+          "tr td a",
+          ".list_1 li a"
+        ],
+        "date": [
+          ".time",
+          "span.date",
+          "td.date"
+        ],
+        "next_page": [
+          ".next",
+          "a:contains(下一页)",
+          "a.next-page"
+        ],
+        "detail_container": [
+          "#ch_p",
+          ".content_wrapper.article-wrap .text",
+          ".text",
+          ".content_wrapper",
+          ".conMain",
+          "#zoom",
+          ".article-content"
+        ]
       }
     }
   ]

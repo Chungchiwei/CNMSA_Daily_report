@@ -145,6 +145,7 @@ class CentralMSASource(BaseMaritimeSource):
         self.debug_dir = debug_dir
         self.driver = None
         self._last_selector_strategy = ""
+        self._last_detail_error = ""
 
     # ------------------------------------------------------------------
     def _init_driver(self):
@@ -285,20 +286,19 @@ class CentralMSASource(BaseMaritimeSource):
         link = item.get("link", "")
         if not link or link.startswith("javascript"):
             return ""
+        # 2026-08 實機回報：原本每一筆都用 window.open('') 開新分頁再關掉，320 筆全部
+        # PARSE_ERROR（detail_success=0）。fetch_list() 這個階段已經把所有海事局的列表都
+        # 抓完了，不需要再保留原本分頁的畫面狀態，所以改成直接在目前分頁導航，
+        # 不再開／關分頁，大幅降低連續處理大量筆數時的瀏覽器資源耗用與 window handle
+        # 追蹤失敗的風險（懷疑是先前 100% 失敗的主因，但仍待下次實機執行確認是否已改善）。
         try:
-            self.driver.execute_script("window.open('');")
-            self.driver.switch_to.window(self.driver.window_handles[-1])
             self.driver.set_page_load_timeout(15)
             self.driver.get(link)
             time.sleep(1.5)
-            html = self.driver.page_source
-            return html
+            return self.driver.page_source
         finally:
             try:
-                if len(self.driver.window_handles) > 1:
-                    self.driver.close()
-                    self.driver.switch_to.window(self.driver.window_handles[0])
-                    self.driver.set_page_load_timeout(120)
+                self.driver.set_page_load_timeout(120)
             except Exception:
                 pass
 
@@ -315,16 +315,24 @@ class CentralMSASource(BaseMaritimeSource):
         detail_html = ""
         try:
             detail_html = self.fetch_detail(raw_item)
-        except Exception:
+        except Exception as exc:
             detail_html = ""
+            self._last_detail_error = f"{type(exc).__name__}: {exc}"[:200]
 
-        if detail_html:
-            parsed = self.parse_detail(raw_item, detail_html)
-        else:
+        try:
+            if detail_html:
+                parsed = self.parse_detail(raw_item, detail_html)
+            else:
+                parsed = {"raw_content": "", "cleaned_content": ""}
+
+            combined_for_coords = f"{title}\n{parsed.get('cleaned_content', '')}"
+            coordinates = self._coordinate_extractor(combined_for_coords)
+        except Exception as exc:
+            # 清理內文或抽座標本身出錯，不該讓整筆（更不該讓整個來源）失敗——
+            # 至少保留標題／連結／發布單位，內文留空，claude.md 十四：單筆失敗不可中止整批。
+            self._last_detail_error = f"{type(exc).__name__}: {exc}"[:200]
             parsed = {"raw_content": "", "cleaned_content": ""}
-
-        combined_for_coords = f"{title}\n{parsed.get('cleaned_content', '')}"
-        coordinates = self._coordinate_extractor(combined_for_coords)
+            coordinates = []
 
         return {
             "title": title,

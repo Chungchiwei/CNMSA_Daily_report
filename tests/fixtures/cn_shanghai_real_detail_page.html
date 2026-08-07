@@ -1,0 +1,42 @@
+<!--
+  2026-08-06：使用者實際開啟上海海事局公告詳細頁（沪航警607/26「人员落水」）後，
+  貼上的真實 HTML 片段所重建的測試 fixture。頁面骨架（nav / head_wrap / crumbs /
+  content_wrapper.article-wrap / #ch_p.text / foot_but）與正文文字均取自使用者
+  提供的真實內容，僅補上未貼出的樣板 HTML（<html>/<head> 等）以便獨立解析測試，
+  不含任何登入資訊、Cookie 或 Token。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>上海海事局-沪航警607/26</title>
+</head>
+<body>
+  <div class="head_wrap">
+    <div class="logo">中华人民共和国上海海事局</div>
+    <div class="nav">
+      <ul>
+        <li><a href="/">首页</a></li>
+        <li><a href="/hxtjgsj/index.jhtml">航行通警告</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="crumbs">
+    当前位置：<a href="/">首页</a> &gt; <a href="/hxtjgsj/index.jhtml">航行通警告数据</a> &gt; 正文
+  </div>
+  <div class="content_wrapper article-wrap">
+    <h2 id="title">沪航警607/26</h2>
+    <div class="msg clearfix">
+      <span class="source">来源：上海海事局</span>
+      <span class="date">发布时间：2026-08-05</span>
+    </div>
+    <div id="ch_p" class="text">
+      <p>沪航警607/26，杭州湾，据报1人在概位30-57.69N121-57.34E附近落水失踪，请过往船舶注意搜救。</p>
+    </div>
+    <div class="foot_but">
+      <a href="javascript:window.print();">打印本页</a>
+      <a href="javascript:history.back();">返回列表</a>
+    </div>
+  </div>
+</body>
+</html>

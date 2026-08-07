@@ -401,3 +401,156 @@ def test_fallback_bureaus_matches_real_confirmed_list():
     assert "江苏省地方海事局" in FALLBACK_BUREAUS
     assert "江西省地方海事局" in FALLBACK_BUREAUS
     assert len(FALLBACK_BUREAUS) == 16
+
+
+def test_provincial_parse_list_prefers_span_name_over_concatenated_text():
+    """中央網域（msa.gov.cn 主網域）下的地方海事局頁面（例如新啟用的福建/廣東/山東/
+    遼寧/深圳/浙江/上海/海南，改用中央入口確認過的真實 hash 網址）沿用跟中央入口
+    相同的 span.name/span.time 結構，provincial adapter 的標題擷取也要跟著更新，
+    不然標題會被黏上日期文字。"""
+    cfg = {
+        "source_id": "cn_fujian", "source_name": "福建海事局", "source_type": "CN_MSA",
+        "source_country": "CN", "base_url": "https://www.msa.gov.cn",
+        "list_url": "https://www.msa.gov.cn/7b08405760384570a0fb44e9204c4b1d/index.jhtml",
+        "selectors": {"list_container": [".main_list_ul"], "item": ["li a"]},
+    }
+    source = ProvincialMSASource("cn_fujian", cfg)
+    html = (FIXTURES / "cn_central_real_bureau_menu_and_list.html").read_text(encoding="utf-8")
+    items = source.parse_list(html)
+    assert len(items) == 3
+    assert items[0]["title"] == "拖带作业—沪航警606/26"
+    assert "2026-08-04" not in items[0]["title"]
+
+
+def test_provincial_bureaus_enabled_with_confirmed_central_domain_urls():
+    """2026-08-06：福建/廣東/山東/遼寧/深圳原本因為只有猜測網域、從未驗證而預設停用；
+    使用者提供中央入口真實選單後，改用確認存在的 msa.gov.cn 直連網址並啟用。
+    浙江/上海/海南原本猜測的獨立子網域已被回報為 EMPTY/403，同樣換成確認網址。"""
+    import json
+
+    with open(Path(__file__).resolve().parent.parent / "config" / "maritime_sources.json", encoding="utf-8") as f:
+        data = json.load(f)
+
+    by_id = {s["source_id"]: s for s in data["sources"]}
+
+    for sid in ["cn_fujian", "cn_guangdong", "cn_shandong", "cn_liaoning", "cn_shenzhen"]:
+        assert by_id[sid]["enabled"] is True, f"{sid} 應該已啟用"
+        assert by_id[sid]["list_url"].startswith("https://www.msa.gov.cn/"), f"{sid} 應改用確認過的中央網域網址"
+
+    for sid in ["cn_zhejiang", "cn_shanghai", "cn_hainan"]:
+        assert by_id[sid]["list_url"].startswith("https://www.msa.gov.cn/"), f"{sid} 應改用確認過的中央網域網址"
+        assert len(by_id[sid]["alt_list_urls"]) >= 1, f"{sid} 原本猜測的網址應保留為備援"
+
+
+def test_central_enrich_item_degrades_gracefully_on_detail_fetch_failure():
+    """2026-08-06 實機回報：320 筆列表全部 detail_success=0（PARSE_ERROR）。
+    enrich_item 現在對 fetch_detail 與內文清理/座標擷取都有防禦性 try/except，
+    任何一步出錯都應該還是回傳一筆基本資料（標題/連結/單位），而不是讓整筆消失，
+    並且要把實際錯誤原因記在 _last_detail_error 供健康報告判讀。"""
+    from unittest.mock import MagicMock
+    from cn_sources.central import CentralMSASource
+
+    cfg = {
+        "source_id": "cn_central", "source_name": "中國海事局（中央入口）",
+        "source_type": "CN_MSA", "source_country": "CN",
+        "base_url": "https://www.msa.gov.cn",
+        "list_url": "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html",
+    }
+    source = CentralMSASource("cn_central", cfg)
+    source.driver = MagicMock()
+    source.driver.get.side_effect = Exception("timeout: 詳情頁載入逾時")
+
+    raw_item = {"title": "拖带作业—沪航警606/26", "link": "https://www.msa.gov.cn/x.html", "publish_time": "2026-08-04", "bureau": "上海海事局"}
+    enriched = source.enrich_item(raw_item)
+
+    assert enriched is not None
+    assert enriched["title"] == "拖带作业—沪航警606/26"
+    assert enriched["cleaned_content"] == ""
+    assert "timeout" in source._last_detail_error or "Exception" in source._last_detail_error
+
+
+def test_central_fetch_detail_does_not_open_extra_tabs():
+    """fetch_detail 不應再用 window.open('') 開新分頁——320 筆連續開/關分頁被懷疑是
+    先前 100% detail 失敗的主因，改成直接在目前分頁導航（fetch_list 早已抓完所有
+    海事局列表，不需要再保留原本分頁畫面）。"""
+    from unittest.mock import MagicMock
+    from cn_sources.central import CentralMSASource
+
+    cfg = {
+        "source_id": "cn_central", "source_name": "中國海事局（中央入口）",
+        "source_type": "CN_MSA", "source_country": "CN",
+        "base_url": "https://www.msa.gov.cn",
+        "list_url": "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html",
+    }
+    source = CentralMSASource("cn_central", cfg)
+    source.driver = MagicMock()
+    source.driver.page_source = "<html>詳情頁內容</html>"
+
+    html = source.fetch_detail({"link": "https://www.msa.gov.cn/html/cnmsa/hxaq/article/x.html"})
+
+    assert html == "<html>詳情頁內容</html>"
+    source.driver.execute_script.assert_not_called()  # 不再呼叫 window.open('')
+    source.driver.get.assert_called_once_with("https://www.msa.gov.cn/html/cnmsa/hxaq/article/x.html")
+
+
+def test_clean_html_extracts_real_shanghai_detail_without_noise():
+    """真實上海海事局詳細頁（沪航警607/26）：用 detail_container selector 精準
+    命中 #ch_p 時，應只留下正文，不含 nav/crumbs/head_wrap/foot_but 的雜訊文字。"""
+    from services.content_cleaner import clean_html
+
+    html = (FIXTURES / "cn_shanghai_real_detail_page.html").read_text(encoding="utf-8")
+    text = clean_html(html, content_selectors=["#ch_p", ".content_wrapper.article-wrap .text"])
+
+    assert "沪航警607/26" in text
+    assert "30-57.69N121-57.34E" in text
+    assert "落水失踪" in text
+    # 不應包含導覽/麵包屑/頁尾工具列的文字
+    assert "首页" not in text
+    assert "当前位置" not in text
+    assert "打印本页" not in text
+    assert "返回列表" not in text
+
+
+def test_clean_html_falls_back_to_body_but_still_strips_known_noise_classes():
+    """就算沒有指定任何 detail_container selector（退回 <body>），
+    foot_but / crumbs / head_wrap 也應該被 _NOISE_HINTS 濾掉。"""
+    from services.content_cleaner import clean_html
+
+    html = (FIXTURES / "cn_shanghai_real_detail_page.html").read_text(encoding="utf-8")
+    text = clean_html(html, content_selectors=[])
+
+    assert "落水失踪" in text
+    assert "首页" not in text
+    assert "当前位置" not in text
+    assert "打印本页" not in text
+
+
+def test_coordinate_extractor_handles_no_whitespace_between_lat_and_lon():
+    """實機回報：中國海事局公告常把緯經度黏在一起寫（無空白），
+    例如「30-57.69N121-57.34E」，修正前的 \\s+ 規則會完全比對不到。"""
+    from n8n_msa_monitor import CoordinateExtractor
+
+    extractor = CoordinateExtractor()
+    text = "沪航警607/26，杭州湾，据报1人在概位30-57.69N121-57.34E附近落水失踪，请过往船舶注意搜救。"
+
+    coords = extractor.extract_coordinates(text)
+
+    assert len(coords) == 1
+    lat, lon = coords[0]
+    assert 30.9 < lat < 31.0
+    assert 121.9 < lon < 122.0
+
+
+def test_coordinate_extractor_still_handles_whitespace_separated_format():
+    """既有格式（有空白分隔）不應因這次放寬而失效。"""
+    from n8n_msa_monitor import CoordinateExtractor
+
+    extractor = CoordinateExtractor()
+    text = "禁航区范围：30-57.69N 121-57.34E 附近水域。"
+
+    coords = extractor.extract_coordinates(text)
+
+    assert len(coords) == 1
+    lat, lon = coords[0]
+    assert 30.9 < lat < 31.0
+    assert 121.9 < lon < 122.0

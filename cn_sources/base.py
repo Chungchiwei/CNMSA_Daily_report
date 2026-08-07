@@ -178,7 +178,14 @@ class BaseMaritimeSource:
 
             if detail_success == 0:
                 report.final_status = SourceHealthStatus.PARSE_ERROR
-                report.error_summary = "HTTP 成功但解析不到任何有效項目"
+                last_detail_error = getattr(self, "_last_detail_error", "")
+                if last_detail_error:
+                    # 子類別（例如 CentralMSASource）若有記錄實際的逐筆錯誤原因，
+                    # 附加進來取代死板的固定字串，方便判斷是逾時／找不到元素／
+                    # 內文清理出錯等，而不是每次都只看到同一句話。
+                    report.error_summary = f"HTTP 成功但解析不到任何有效項目（範例錯誤：{last_detail_error}）"
+                else:
+                    report.error_summary = "HTTP 成功但解析不到任何有效項目"
             elif detail_success < report.list_item_count:
                 report.final_status = SourceHealthStatus.PARTIAL
             else:
