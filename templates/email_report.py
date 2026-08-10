@@ -80,18 +80,18 @@ def _coords_of(w: Dict):
 
 
 def build_subject(today_warnings: List[Dict], history_warnings: List[Dict]) -> str:
-    """【海事航安警示｜HIGH】今日 3 筆新增－東海實彈射擊／浙江沿海禁航"""
+    """【航行警告監控報告｜HIGH】今日 3 筆新增－東海實彈射擊／浙江沿海禁航"""
     total_today = len(today_warnings)
     if not today_warnings:
         top_history = _sort_by_risk(history_warnings)
         highest = _risk_level_of(top_history[0]) if top_history else "INFO"
-        return f"【海事航安警示｜今日無新增】目前追蹤 {len(history_warnings)} 筆有效警告，最高風險 {highest}"
+        return f"【航行警告監控報告｜今日無新增】目前追蹤 {len(history_warnings)} 筆有效警告，最高風險 {highest}"
 
     sorted_today = _sort_by_risk(today_warnings)
     highest_level = _risk_level_of(sorted_today[0])
     headline_titles = [_sanitize_header_text(w.get("title", "")) for w in sorted_today[:2] if w.get("title")]
     headline = "／".join(t[:20] for t in headline_titles) or "詳見報告內容"
-    return f"【海事航安警示｜{highest_level}】今日 {total_today} 筆新增－{headline}"
+    return f"【航行警告監控報告｜{highest_level}】今日 {total_today} 筆新增－{headline}"
 
 
 def _sanitize_header_text(text: str) -> str:
@@ -370,7 +370,7 @@ def build_html_report(
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
 <meta name="supported-color-schemes" content="light dark">
-<title>海事航安警示報告</title>
+<title>航行警告監控報告</title>
 </head>
 <body style="margin:0;padding:0;background:#F4F6F8;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F8;">
@@ -378,7 +378,7 @@ def build_html_report(
     <table width="700" cellpadding="0" cellspacing="0" style="background:#FFFFFF;max-width:700px;">
       <tr>
         <td style="background:#0A1628;padding:24px;">
-          <span style="font-family:Arial,sans-serif;font-size:20px;color:#FFFFFF;font-weight:bold;">海事航安警示監控報告</span><br><br>
+          <span style="font-family:Arial,sans-serif;font-size:20px;color:#FFFFFF;font-weight:bold;">航行警告監控報告</span><br><br>
           <span style="font-family:Arial,sans-serif;font-size:12px;color:#8FA3B8;">報告時間：{_esc(generated_at)} (TPE)</span>
         </td>
       </tr>
@@ -396,7 +396,7 @@ def build_html_report(
       <tr>
         <td style="background:#E9ECEF;padding:16px;text-align:center;">
           <span style="font-family:Arial,sans-serif;font-size:11px;color:#6C757D;">
-            此為自動發送的郵件，請勿直接回覆。海事航安警示監控系統。
+            此為自動發送的郵件，請勿直接回覆。航行警告監控系統。
           </span>
         </td>
       </tr>
@@ -415,7 +415,7 @@ def build_plain_text_report(
 ) -> str:
     """純文字 MIME alternative，供不支援 HTML 的信箱客戶端顯示。"""
     generated_at = generated_at or _tpe_now_str()
-    lines = [f"海事航安警示監控報告 — {generated_at} (TPE)", "=" * 50, ""]
+    lines = [f"航行警告監控報告 — {generated_at} (TPE)", "=" * 50, ""]
 
     if source_anomaly:
         lines.append("⚠ 資料來源異常：本次執行未能正常取得任何來源資料，請勿視為「今日無新增」。")
