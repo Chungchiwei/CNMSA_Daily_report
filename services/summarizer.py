@@ -70,7 +70,7 @@ def rule_based_summary(title: str, content: str, max_sentences: int = 4) -> str:
 
 def recommended_action(risk_level: str) -> str:
     mapping = {
-        "CRITICAL": "立即評估航線是否需繞航，通知船長與航運調度，密切追蹤公告更新。",
+        "CRITICAL": "立即評估航線是否需繞航，通知船長與運務部PIC，密切追蹤公告更新。",
         "HIGH": "建議調整航線或提高警戒，安排船舶避開公告區域，持續關注後續公告。",
         "MEDIUM": "留意公告區域與有效期間，通過時提高瞭望與 AIS 報告頻率。",
         "LOW": "維持常規監控，通過前再次確認公告是否仍然有效。",

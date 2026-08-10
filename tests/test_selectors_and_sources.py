@@ -554,3 +554,144 @@ def test_coordinate_extractor_still_handles_whitespace_separated_format():
     lat, lon = coords[0]
     assert 30.9 < lat < 31.0
     assert 121.9 < lon < 122.0
+
+
+def test_fix_response_encoding_overrides_when_no_charset_in_header():
+    """實機回報 Email 報告出現中文亂碼：政府網站常只回 Content-Type: text/html
+    （charset 寫在 <meta> 而非 HTTP 標頭），requests 預設猜成 ISO-8859-1，
+    .text 解碼 UTF-8 內容會產生亂碼。修正後應改用 apparent_encoding。"""
+    from cn_sources.provincial import ProvincialMSASource
+
+    class FakeResp:
+        headers = {"Content-Type": "text/html"}  # 沒有 charset
+        apparent_encoding = "utf-8"
+        encoding = "ISO-8859-1"  # requests 的預設猜測值
+
+    resp = FakeResp()
+    ProvincialMSASource._fix_response_encoding(resp)
+    assert resp.encoding == "utf-8"
+
+
+def test_fix_response_encoding_respects_explicit_header_charset():
+    """HTTP 標頭已明確標示 charset 時，不應該被 apparent_encoding 覆蓋掉。"""
+    from cn_sources.provincial import ProvincialMSASource
+
+    class FakeResp:
+        headers = {"Content-Type": "text/html; charset=GBK"}
+        apparent_encoding = "utf-8"
+        encoding = "GBK"
+
+    resp = FakeResp()
+    ProvincialMSASource._fix_response_encoding(resp)
+    assert resp.encoding == "GBK"  # 維持標頭指定的值，不覆蓋
+
+
+def test_provincial_parse_list_skips_self_referential_list_page_links():
+    """實機回報有些連結會連到海事局主頁而非公告詳細頁：懷疑是 selector fallback
+    誤選到「相關連結／回首頁」區塊，裡面的 <a> 全部指回列表頁本身。
+    這類自我參照連結應被視為雜訊丟棄，不當成公告項目。"""
+    from cn_sources.provincial import ProvincialMSASource
+
+    cfg = {
+        "source_id": "cn_test", "source_name": "測試海事局", "source_type": "CN_MSA",
+        "source_country": "CN", "base_url": "https://www.msa.gov.cn",
+        "list_url": "https://www.msa.gov.cn/8e10ea74/index.jhtml",
+        "selectors": {
+            "list_container": [".main_list_ul"],
+            "item": ["li a"],
+        },
+    }
+    source = ProvincialMSASource("cn_test", cfg)
+    html = """
+    <html><body>
+      <ul class="main_list_ul">
+        <li><a href="/8e10ea74/index.jhtml">返回首頁</a></li>
+        <li><a href="/8e10ea74/4bc12345/detail.jhtml">浙航警0099/26</a></li>
+      </ul>
+    </body></html>
+    """
+    items = source.parse_list(html)
+    assert len(items) == 1
+    assert items[0]["title"] == "浙航警0099/26"
+
+
+def test_provincial_parse_list_resolves_relative_href_against_page_url_not_domain_root():
+    """urljoin 基準若用網域根目錄（無路徑）而非實際列表頁網址，相對路徑會把
+    原本的資料夾路徑前綴解析掉。改用實際頁面網址當基準後應正確保留路徑。"""
+    from cn_sources.provincial import ProvincialMSASource
+
+    cfg = {
+        "source_id": "cn_test", "source_name": "測試海事局", "source_type": "CN_MSA",
+        "source_country": "CN", "base_url": "https://www.msa.gov.cn",
+        "list_url": "https://www.msa.gov.cn/8e10ea74/index.jhtml",
+        "selectors": {"list_container": [".main_list_ul"], "item": ["li a"]},
+    }
+    source = ProvincialMSASource("cn_test", cfg)
+    html = """
+    <html><body>
+      <ul class="main_list_ul">
+        <li><a href="4bc12345/detail.jhtml">浙航警0100/26</a></li>
+      </ul>
+    </body></html>
+    """
+    items = source.parse_list(html, page_url="https://www.msa.gov.cn/8e10ea74/index.jhtml")
+    assert len(items) == 1
+    assert items[0]["link"] == "https://www.msa.gov.cn/8e10ea74/4bc12345/detail.jhtml"
+
+
+def test_central_fetch_list_filters_out_items_whose_title_equals_bureau_name(monkeypatch, tmp_path):
+    """實機回報部分連結會連到海事局主頁而非公告詳細頁：懷疑是 selector fallback
+    在某些海事局頁面誤選到選單/首頁連結區塊，而不是真正的公告列表。這類誤判
+    項目有個共同特徵：標題就是海事局名稱本身。fetch_list() 應該把這種項目
+    過濾掉，只保留真正的公告項目。"""
+    from unittest.mock import MagicMock, patch
+    from cn_sources.central import CentralMSASource
+
+    cfg = {
+        "source_id": "cn_central", "source_name": "中國海事局（中央入口）",
+        "source_type": "CN_MSA", "source_country": "CN",
+        "base_url": "https://www.msa.gov.cn",
+        "list_url": "https://www.msa.gov.cn/html/cnmsa/hxaq/aqxx/index.html",
+        "enabled": True,
+        "selectors": {"nav_trigger_text": ["航行警告"], "list_container": [".main_list_ul"]},
+    }
+    source = CentralMSASource("cn_central", cfg, save_debug=True, debug_dir=str(tmp_path))
+
+    fake_driver = MagicMock()
+    fake_driver.page_source = """
+    <html><body>
+      <ul class="main_list_ul">
+        <li><a href="/x/index.jhtml">上海海事局</a></li>
+        <li><a href="/x/article/1.html">沪航警0001/26</a></li>
+      </ul>
+    </body></html>
+    """
+    # 選單只回傳一個海事局名稱，指定這次要走的分支
+    fake_driver.find_elements.return_value = [MagicMock(text="上海海事局")]
+    fake_driver.find_element.return_value = MagicMock()  # 點擊該海事局的元素
+
+    with patch.object(source, "_init_driver", return_value=fake_driver), \
+         patch("cn_sources.central.time.sleep", return_value=None), \
+         patch("selenium.webdriver.support.expected_conditions.element_to_be_clickable",
+               return_value="nav-ok"), \
+         patch("selenium.webdriver.support.ui.WebDriverWait") as MockWait:
+        MockWait.return_value.until.return_value = "nav-ok"
+        items = source.fetch_list()
+
+    titles = [i["title"] for i in items]
+    assert "沪航警0001/26" in titles
+    assert "上海海事局" not in titles  # 自我參照的選單/首頁連結已被過濾掉
+
+
+def test_executive_summary_no_longer_shows_source_health_table():
+    """使用者反映各資料來源健康狀態表格讓報告版面很亂，且已有獨立的系統異常通知，
+    一般報告不應再顯示這張表格。"""
+    from templates.email_report import build_executive_summary
+
+    class FakeReport:
+        def to_row(self):
+            return {"來源": "測試", "狀態": "HEALTHY", "列表筆數": 20, "最新公告日期": "2026-08-10"}
+
+    html = build_executive_summary([], [], health_reports=[FakeReport()])
+    assert "各資料來源健康狀態" not in html
+    assert "列表筆數" not in html

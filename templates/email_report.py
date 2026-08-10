@@ -123,24 +123,12 @@ def build_executive_summary(
     urgent = [w for w in today_warnings if _risk_level_of(w) in ("CRITICAL", "HIGH")]
     urgent_text = "、".join((w.get("title", "")[:24] for w in urgent[:3])) if urgent else "無"
 
-    health_rows = ""
-    if health_reports:
-        for r in health_reports:
-            row = r.to_row() if hasattr(r, "to_row") else r
-            status_val = row.get("狀態", "-")
-            status_color = {
-                "HEALTHY": "#2E7D32", "PARTIAL": "#F9A825", "EMPTY": "#757575",
-                "BLOCKED": "#B71C1C", "PARSE_ERROR": "#B71C1C", "CONNECTION_ERROR": "#B71C1C",
-                "DISABLED": "#9E9E9E",
-            }.get(status_val, "#455A64")
-            health_rows += (
-                f'<tr><td style="padding:4px 8px;border-bottom:1px solid #ECEFF1;">{_esc(row.get("來源",""))}</td>'
-                f'<td style="padding:4px 8px;border-bottom:1px solid #ECEFF1;color:{status_color};font-weight:bold;">{_esc(status_val)}</td>'
-                f'<td style="padding:4px 8px;border-bottom:1px solid #ECEFF1;">{_esc(row.get("列表筆數",0))}</td>'
-                f'<td style="padding:4px 8px;border-bottom:1px solid #ECEFF1;">{_esc(row.get("最新公告日期","-"))}</td></tr>'
-            )
-    if not health_rows:
-        health_rows = '<tr><td colspan="4" style="padding:6px 8px;color:#757575;">本次執行未包含來源健康檢查資訊</td></tr>'
+    # 2026-08-07 使用者反映「各資料來源健康狀態」表格讓版面看起來很亂，
+    # 且來源異常本來就已經有獨立的「系統異常」通知機制會發信告知
+    # （見 services/source_health_alert.py 的 detect_anomaly，與此處完全獨立），
+    # 一般報告不需要重複顯示每次都是全綠 HEALTHY 的落落長表格，故不再渲染。
+    # health_reports 參數仍保留在函式簽名中以維持呼叫端相容性，只是不再用於畫面輸出。
+    del health_reports
 
     return f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="background:#F4F6F8;border:1px solid #E0E0E0;border-radius:4px;">
@@ -171,18 +159,6 @@ def build_executive_summary(
             <td style="font-family:Arial,sans-serif;font-size:13px;color:#455A64;">需要立即關注</td>
             <td style="font-family:Arial,sans-serif;font-size:13px;color:#B71C1C;font-weight:bold;">{_esc(urgent_text)}</td>
           </tr>
-        </table>
-        <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;">
-          <tr><td style="font-family:Arial,sans-serif;font-size:13px;color:#455A64;font-weight:bold;padding-bottom:4px;">各資料來源健康狀態</td></tr>
-        </table>
-        <table width="100%" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border:1px solid #ECEFF1;">
-          <tr style="background:#ECEFF1;">
-            <td style="padding:4px 8px;font-family:Arial,sans-serif;font-size:12px;color:#455A64;"><b>來源</b></td>
-            <td style="padding:4px 8px;font-family:Arial,sans-serif;font-size:12px;color:#455A64;"><b>狀態</b></td>
-            <td style="padding:4px 8px;font-family:Arial,sans-serif;font-size:12px;color:#455A64;"><b>列表筆數</b></td>
-            <td style="padding:4px 8px;font-family:Arial,sans-serif;font-size:12px;color:#455A64;"><b>最新公告日期</b></td>
-          </tr>
-          {health_rows}
         </table>
       </td></tr>
     </table>

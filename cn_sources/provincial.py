@@ -38,6 +38,17 @@ _DATE_PATTERNS = [
 ]
 
 
+def _normalize_url_for_compare(url: str) -> str:
+    """比較兩個網址是否指向同一頁面時使用：去掉 query string/fragment 與結尾斜線。"""
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+
+
 def _is_safe_url(url: str) -> bool:
     """只允許 http/https，避免 javascript:/data: 等被當成連結使用。"""
     if not url:
@@ -93,8 +104,32 @@ class ProvincialMSASource(BaseMaritimeSource):
         except Exception:
             pass
 
+    @staticmethod
+    def _fix_response_encoding(resp: requests.Response) -> None:
+        """
+        修正中文亂碼問題（claude.md 二之7：Email/Teams 缺少內文＝亂碼也算此類問題）。
+
+        requests 依 RFC 2616，若 HTTP 回應標頭的 Content-Type 沒有明確標出
+        charset（許多中國海事局頁面只回 "text/html"，charset 寫在 <meta> 標籤
+        裡而非 HTTP 標頭），requests 會把 response.encoding 預設猜成
+        ISO-8859-1，之後 .text 用這個錯誤編碼解碼 UTF-8/GBK 位元組，就會產生
+        像「è¾¾é¥è¾341」這種亂碼。改用 requests 內建的 apparent_encoding
+        （以回應內容位元組本身做編碼偵測，charset-normalizer/chardet），
+        只在 HTTP 標頭沒有明確 charset 時才覆蓋，避免蓋掉真的有標頭的情況。
+        """
+        content_type = resp.headers.get("Content-Type", "")
+        if "charset=" in content_type.lower():
+            return
+        try:
+            detected = resp.apparent_encoding
+        except Exception:
+            detected = None
+        if detected:
+            resp.encoding = detected
+
     def _get(self, url: str) -> requests.Response:
         resp = self._session.get(url, timeout=_DEFAULT_TIMEOUT, verify=self._ssl_verify)
+        self._fix_response_encoding(resp)
         if resp.status_code in (401, 403, 429, 451):
             # 站台有回應但拒絕存取，很可能是 WAF／反爬封鎖（也可能是來源 IP 本身被
             # 政府網站封鎖，例如雲端/機房 IP 段），與單純連不上網路的意義不同，
@@ -125,7 +160,7 @@ class ProvincialMSASource(BaseMaritimeSource):
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 continue
-            items = self.parse_list(resp.text)
+            items = self.parse_list(resp.text, page_url=getattr(resp, "url", "") or url)
             if items:
                 return items
             # HTTP 成功但解析不到任何項目：保存快照方便之後調整 selector
@@ -137,10 +172,24 @@ class ProvincialMSASource(BaseMaritimeSource):
             raise ConnectionError(f"{self.source_name} 所有候選列表網址均無法連線: {last_exc}")
         return []
 
-    def parse_list(self, raw: str) -> List[Dict]:
+    def parse_list(self, raw: str, page_url: str = "") -> List[Dict]:
         if not raw:
             return []
         soup = BeautifulSoup(raw, "html.parser")
+
+        # 2026-08-07 使用者實機回報部分連結會連到海事局主頁而非公告詳細頁。
+        # 原本 urljoin 一律用 self.base_url（網域根目錄，不含路徑），若列表頁本身
+        # 的 <a href> 是相對於「目前頁面所在資料夾」而非網域根目錄（例如列表頁在
+        # /8e10ea74.../index.jhtml 底下，公告連結是 4bc12xxx/detail.jhtml 這種
+        # 不含開頭斜線的相對路徑），用網域根目錄當基準會把路徑前綴解析掉，變成
+        # 錯誤網址。改用「實際被抓取的頁面網址」（含完整路徑）當 urljoin 基準，
+        # 對本來就是絕對路徑或含開頭斜線的 href 沒有影響，只修正真正的相對路徑。
+        resolve_base = page_url or self.list_url or self.base_url
+
+        # 同一頁面若沒有真的公告清單容器，selector fallback 可能誤選到「相關連結／
+        # 本局首頁」之類的區塊，裡面的 <a> 全部指回列表頁本身。這類項目一律視為
+        # 雜訊丟棄，不當成公告（真正的公告連結一定會指向與列表頁不同的詳細頁）。
+        self_url_norm = _normalize_url_for_compare(resolve_base)
 
         container_candidates = self.selectors.get("list_container", []) or [None]
         item_candidates = self.selectors.get("item", ["a"])
@@ -183,8 +232,11 @@ class ProvincialMSASource(BaseMaritimeSource):
                     href = a_tag.get("href", "")
                     if not title or not href:
                         continue
-                    full_url = urljoin(self.base_url or self.list_url, href)
+                    full_url = urljoin(resolve_base, href)
                     if not _is_safe_url(full_url):
+                        continue
+                    if _normalize_url_for_compare(full_url) == self_url_norm:
+                        # 連結指回列表頁本身（很可能是選單/首頁連結被誤判成公告項目），跳過
                         continue
 
                     publish_time = self._extract_date(a_tag, date_candidates)

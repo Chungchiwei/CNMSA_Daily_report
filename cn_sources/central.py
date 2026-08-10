@@ -270,9 +270,20 @@ class CentralMSASource(BaseMaritimeSource):
                 if not items:
                     self._save_debug_snapshot(f"empty_{bureau_name}", html)
 
-                for item in items:
+                # 2026-08-07 使用者實機回報部分連結會連到海事局主頁而非公告詳細頁。
+                # 懷疑是 selector fallback（例如 .right_main／.conMain 等舊版候選）
+                # 在某些海事局頁面誤選到選單／首頁連結區塊，而不是真正的公告列表。
+                # 這類誤判項目有個共同特徵：標題就是海事局名稱本身（真正的公告標題
+                # 一定是「XX航警OOO/26」這類編號或事件描述，不會剛好等於局名）。
+                # 一併丟棄，避免把「連到主頁」的假項目當成公告存進資料庫。
+                filtered_items = [
+                    item for item in items
+                    if item.get("title", "").strip() != bureau_name.strip()
+                ]
+
+                for item in filtered_items:
                     item["bureau"] = bureau_name
-                all_items.extend(items)
+                all_items.extend(filtered_items)
             except Exception:
                 # 單一海事局失敗不影響其他海事局
                 continue
